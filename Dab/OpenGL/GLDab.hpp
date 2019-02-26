@@ -9,8 +9,6 @@
 #include <Stick/UniquePtr.hpp>
 #include <Stick/Variant.hpp>
 
-#include <functional>
-
 namespace dab
 {
 namespace gl
@@ -327,7 +325,7 @@ struct STICK_API GLDrawCmd
 
 struct STICK_API GLExternalDrawCmd
 {
-    std::function<Error()> fn;
+    ExternalDrawFunction fn;
 };
 
 struct STICK_API GLViewportCmd
@@ -425,6 +423,9 @@ class STICK_API GLRenderPass : public RenderPass
                   UInt32 _vertexOffset,
                   UInt32 _vertexCount,
                   VertexDrawMode _drawMode) override;
+
+    void drawCustom(ExternalDrawFunction _fn) override;
+
     void setViewport(Float32 _x, Float32 _y, Float32 _w, Float32 _h) override;
     void clearBuffers(const ClearSettings & _settings) override;
     void reset();

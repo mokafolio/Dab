@@ -4,6 +4,8 @@
 #include <Stick/DynamicArray.hpp>
 #include <Stick/Result.hpp>
 
+#include <functional>
+
 // #define DAB_HANDLE(name)                                                                           \
 //     class STICK_API name                                                                           \
 //     {                                                                                              \
@@ -645,6 +647,8 @@ class STICK_API RenderBuffer
     }
 };
 
+using ExternalDrawFunction = std::function<stick::Error()>;
+
 class STICK_API RenderPass
 {
   public:
@@ -657,6 +661,8 @@ class STICK_API RenderPass
                           UInt32 _vertexOffset,
                           UInt32 _vertexCount,
                           VertexDrawMode _drawMode) = 0;
+
+    virtual void drawCustom(ExternalDrawFunction _fn) = 0;
     virtual void setViewport(Float32 _x, Float32 _y, Float32 _w, Float32 _h) = 0;
     virtual void clearBuffers(const ClearSettings & _settings) = 0;
 

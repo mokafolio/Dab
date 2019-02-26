@@ -875,6 +875,20 @@ Error GLRenderDevice::endFrame()
 
                 m_lastDrawCall = *mdc;
             }
+            else if (auto mdc = cmd.maybe<GLExternalDrawCmd>())
+            {
+                err = (*mdc).fn();
+
+                //@TODO: Should we clear the render passes etc. before returning any errors so that
+                // there is the possibility of recovery??
+                if (err)
+                    return err;
+
+                // we reset the last draw call to make sure the render state is fully being enabled
+                // for the following draw call as there is no way for us to know hat the external
+                // draw command changed regarding the opengl state.
+                m_lastDrawCall.reset();
+            }
         }
 
         pass->reset();
@@ -1351,6 +1365,11 @@ void GLRenderPass::drawMesh(const Mesh * _mesh,
                                    _vertexCount,
                                    _drawMode,
                                    std::move(bindings) });
+}
+
+void GLRenderPass::drawCustom(ExternalDrawFunction _fn)
+{
+    m_commands.append((GLExternalDrawCmd){ _fn });
 }
 
 void GLRenderPass::setViewport(Float32 _x, Float32 _y, Float32 _w, Float32 _h)
