@@ -482,8 +482,6 @@ Result<Program *> GLRenderDevice::createProgram(const char * _vertexShader,
             // ASSERT_NO_GL_ERROR(glGetActiveUniform(program, index, 512, &len, &size, &type,
             // nameBuffer));
 
-            // printf("name %s off %i size %i\n", nameBuffer, offset, byteCount);
-
             block.uniforms.append({ String(nameBuffer), (GLuint)offset, mt });
             if (i > 0)
                 block.byteCount += offset;
@@ -570,6 +568,7 @@ Result<Pipeline *> GLRenderDevice::createPipeline(const PipelineSettings & _sett
 {
     UInt64 renderState = 0;
 
+    setFlag(renderState, RF_Multisampling, _settings.multisample);
     setFlag(renderState, RF_DepthTest, _settings.depthTest);
     setFlag(renderState, RF_DepthWrite, _settings.depthWrite);
     setField(renderState, RF_DepthFuncShift, RF_DepthFuncMask, _settings.depthFunction);
@@ -600,11 +599,11 @@ Result<Pipeline *> GLRenderDevice::createPipeline(const PipelineSettings & _sett
         ret->m_uniformBlockStorage.append(std::move(storage));
     }
 
-    // ret->m_textures.reserve(2);
-    // for (Size i = 0; i < ret->m_program->m_textures.count(); ++i)
-    // {
-    //     ret->m_textures.append(stick::makeUnique<GLPipelineTexture>(*m_alloc, ret.get(), i, j));
-    // }
+    ret->m_textures.reserve(2);
+    for (Size i = 0; i < ret->m_program->m_textures.count(); ++i)
+    {
+        ret->m_textures.append(stick::makeUnique<GLPipelineTexture>(*m_alloc, ret.get()));
+    }
 
     m_pipelines.append(std::move(ret));
     return m_pipelines.last().get();
@@ -703,7 +702,12 @@ void GLRenderDevice::destroyTexture(Texture * _texture)
         }
     }
 
-    removeItem(m_textures, static_cast<GLTexture *>(_texture));
+    //@TODO: Should we remove the texture from its renderbuffer or simply say that's undefined
+    // behavior for now?
+    GLTexture * gltex = static_cast<GLTexture *>(_texture);
+    STICK_ASSERT(gltex->m_renderBuffer == nullptr);
+    glDeleteTextures(1, &gltex->m_glTexture);
+    removeItem(m_textures, gltex);
 }
 
 Result<Sampler *> GLRenderDevice::createSampler(const SamplerSettings & _settings)
@@ -796,6 +800,7 @@ static Error validateFrameBuffer()
 Result<RenderBuffer *> GLRenderDevice::createRenderBuffer(const RenderBufferSettings & _settings)
 {
     GLuint glFbo, glMsaaFbo;
+    glMsaaFbo = 0;
 
     ASSERT_NO_GL_ERROR(glGenFramebuffers(1, &glFbo));
     if (_settings.sampleCount > 1)
@@ -804,12 +809,12 @@ Result<RenderBuffer *> GLRenderDevice::createRenderBuffer(const RenderBufferSett
     }
 
     auto rbu = makeUnique<GLRenderBuffer>(*m_alloc,
-                                         *m_alloc,
-                                         _settings.width,
-                                         _settings.height,
-                                         _settings.sampleCount,
-                                         glFbo,
-                                         glMsaaFbo);
+                                          *m_alloc,
+                                          _settings.width,
+                                          _settings.height,
+                                          _settings.sampleCount,
+                                          glFbo,
+                                          glMsaaFbo);
     m_renderBuffers.append(std::move(rbu));
     GLRenderBuffer * rb = m_renderBuffers.last().get();
 
@@ -847,7 +852,7 @@ Result<RenderBuffer *> GLRenderDevice::createRenderBuffer(const RenderBufferSett
         auto tex = makeUnique<GLTexture>(*m_alloc, texHandle);
         tex->m_glTarget = GL_TEXTURE_2D;
         tex->m_format = rt.format;
-        // TextureHandle th = m_textures.append({ texHandle, GL_TEXTURE_2D, rt.format, rbh });
+        tex->m_renderBuffer = rb;
 
         ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, rb->m_glFBO));
 
@@ -887,71 +892,92 @@ Result<RenderBuffer *> GLRenderDevice::createRenderBuffer(const RenderBufferSett
         Error err = validateFrameBuffer();
         if (err)
         {
+            destroyRenderBuffer(rb, true);
             return err;
         }
 
-        // if (_settings.sampleCount > 1)
-        // {
-        //     Int32 maxSamples;
+        if (_settings.sampleCount > 1)
+        {
+            Int32 maxSamples;
 
-        //     ASSERT_NO_GL_ERROR(glGetIntegerv(GL_MAX_SAMPLES, &maxSamples));
+            ASSERT_NO_GL_ERROR(glGetIntegerv(GL_MAX_SAMPLES, &maxSamples));
 
-        //     if (renderBuffer.sampleCount > maxSamples)
-        //         renderBuffer.sampleCount = maxSamples;
+            //@TODO: Should this silently limit the sample count or fail?
+            if (rb->m_sampleCount > maxSamples)
+                rb->m_sampleCount = maxSamples;
 
-        //     ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, renderBuffer.glHandleMSAA));
+            ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, rb->m_glMSAAFBO));
 
-        //     GLuint glrb;
-        //     ASSERT_NO_GL_ERROR(glGenRenderbuffers(1, &glrb));
-        //     ASSERT_NO_GL_ERROR(glBindRenderbuffer(GL_RENDERBUFFER, glrb));
-        //     ASSERT_NO_GL_ERROR(glRenderbufferStorageMultisample(GL_RENDERBUFFER,
-        //                                                         renderBuffer.sampleCount,
-        //                                                         format.glInternalFormat,
-        //                                                         (GLuint)renderBuffer.width,
-        //                                                         (GLuint)renderBuffer.height));
+            GLuint glrb;
+            ASSERT_NO_GL_ERROR(glGenRenderbuffers(1, &glrb));
+            ASSERT_NO_GL_ERROR(glBindRenderbuffer(GL_RENDERBUFFER, glrb));
+            ASSERT_NO_GL_ERROR(glRenderbufferStorageMultisample(GL_RENDERBUFFER,
+                                                                rb->m_sampleCount,
+                                                                format.glInternalFormat,
+                                                                (GLuint)rb->m_width,
+                                                                (GLuint)rb->m_height));
 
-        //     if (bIsColorAttachment)
-        //     {
-        //         ASSERT_NO_GL_ERROR(
-        //             glFramebufferRenderbuffer(GL_FRAMEBUFFER,
-        //                                       GL_COLOR_ATTACHMENT0 + nextColorTargetID,
-        //                                       GL_RENDERBUFFER,
-        //                                       glrb));
-        //     }
-        //     else
-        //     {
-        //         ASSERT_NO_GL_ERROR(glDrawBuffer(GL_NONE));
-        //         ASSERT_NO_GL_ERROR(glReadBuffer(GL_NONE));
-        //         ASSERT_NO_GL_ERROR(glFramebufferRenderbuffer(
-        //             GL_FRAMEBUFFER,
-        //             !info.bIsStencilFormat ? GL_DEPTH_ATTACHMENT : GL_DEPTH_STENCIL_ATTACHMENT,
-        //             GL_RENDERBUFFER,
-        //             glrb));
-        //     }
-        //     target.msaaRenderBuffer = glrb;
+            if (bIsColorAttachment)
+            {
+                ASSERT_NO_GL_ERROR(
+                    glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                                              GL_COLOR_ATTACHMENT0 + nextColorTargetID,
+                                              GL_RENDERBUFFER,
+                                              glrb));
+            }
+            else
+            {
+                ASSERT_NO_GL_ERROR(glDrawBuffer(GL_NONE));
+                ASSERT_NO_GL_ERROR(glReadBuffer(GL_NONE));
+                ASSERT_NO_GL_ERROR(glFramebufferRenderbuffer(
+                    GL_FRAMEBUFFER,
+                    !info.bIsStencilFormat ? GL_DEPTH_ATTACHMENT : GL_DEPTH_STENCIL_ATTACHMENT,
+                    GL_RENDERBUFFER,
+                    glrb));
+            }
+            target.msaaRenderBuffer = glrb;
 
-        //     err = validateFrameBuffer();
-        //     if (err)
-        //     {
-        //         destroyRenderBuffer(rbh, true);
-        //         return err;
-        //     }
+            err = validateFrameBuffer();
+            if (err)
+            {
+                destroyRenderBuffer(rb, true);
+                return err;
+            }
 
-        //     if (bIsColorAttachment)
-        //         nextColorTargetID++;
+            if (bIsColorAttachment)
+                nextColorTargetID++;
+        }
 
-        // }
-
-        // renderBuffer.renderTargets.append(target);
+        m_textures.append(std::move(tex));
+        rb->m_renderTargets.append(target);
     }
 
-    // ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+    ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, 0));
 
-    // return rbh;
+    return rb;
 }
 
-void GLRenderDevice::destroyRenderBuffer(RenderBuffer * _renderBuffer)
+void GLRenderDevice::destroyRenderBuffer(RenderBuffer * _rb, bool _bDestroyRenderTargets)
 {
+    GLRenderBuffer * rb = static_cast<GLRenderBuffer *>(_rb);
+    ASSERT_NO_GL_ERROR(glDeleteFramebuffers(1, &rb->m_glFBO));
+    if (rb->m_glMSAAFBO)
+    {
+        for (auto & rt : rb->m_renderTargets)
+        {
+            ASSERT_NO_GL_ERROR(glDeleteRenderbuffers(1, &(rt.msaaRenderBuffer)));
+        }
+        ASSERT_NO_GL_ERROR(glDeleteFramebuffers(1, &rb->m_glMSAAFBO));
+    }
+
+    for (auto & rt : rb->m_renderTargets)
+    {
+        rt.texture->m_renderBuffer = nullptr;
+        if (_bDestroyRenderTargets)
+            destroyTexture(rt.texture);
+    }
+
+    removeItem(m_renderBuffers, rb);
 }
 
 RenderPass * GLRenderDevice::beginPass(const RenderPassSettings & _settings)
@@ -968,7 +994,7 @@ RenderPass * GLRenderDevice::beginPass(const RenderPassSettings & _settings)
         m_renderPasses.append(makeUnique<GLRenderPass>(*m_alloc, this, *m_alloc));
         ret = m_renderPasses.last().get();
     }
-    ret->m_renderBuffer = _settings.renderBuffer;
+    ret->m_renderBuffer = static_cast<GLRenderBuffer*>(_settings.renderBuffer);
     if (_settings.clear)
         ret->clearBuffers(*_settings.clear);
     return ret;
@@ -1014,6 +1040,29 @@ static void clearBuffers(const ClearSettings & _clear)
         ASSERT_NO_GL_ERROR(glClear(clearMask));
 }
 
+static void bindRenderBufferImpl(GLRenderBuffer * _rb, bool _bMarkDirty)
+{
+    if (_rb)
+    {
+        if (_rb->m_glMSAAFBO)
+        {
+            ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, _rb->m_glMSAAFBO));
+        }
+        else
+        {
+            ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, _rb->m_glFBO));
+        }
+
+        _rb->m_bDirty = _bMarkDirty;
+        ASSERT_NO_GL_ERROR(glDrawBuffers((GLuint)_rb->m_colorAttachmentPoints.count(),
+                                         &_rb->m_colorAttachmentPoints[0]));
+    }
+    else
+    {
+        ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+    }
+}
+
 Error GLRenderDevice::endFrame()
 {
     Error err;
@@ -1028,6 +1077,7 @@ Error GLRenderDevice::endFrame()
 
     for (auto * pass : m_currentRenderPasses)
     {
+        bindRenderBufferImpl(pass->m_renderBuffer, true);
         for (auto & cmd : pass->m_commands)
         {
             if (auto mcc = cmd.maybe<GLClearCmd>())
@@ -1211,6 +1261,10 @@ Error GLRenderDevice::endFrame()
                     GLPipelineTexture * tex = pipeline->m_textures[i].get();
                     if (tex->m_texture)
                     {
+                        // if this is a render target, make sure its blit in case its attached to a MSAA fbo
+                        if (tex->m_texture->m_renderBuffer)
+                            tex->m_texture->m_renderBuffer->finalizeForReading(pass->m_renderBuffer);
+
                         STICK_ASSERT(tex->m_sampler);
                         ASSERT_NO_GL_ERROR(glBindSampler((GLuint)i, tex->m_sampler->m_glSampler));
                         if (!m_lastDrawCall ||
@@ -1222,45 +1276,6 @@ Error GLRenderDevice::endFrame()
                         }
                     }
                 }
-
-                // for (Size i = 0; i < (*mdc).renderState.textures().count(); ++i)
-                // {
-                //     auto & tex = (*mdc).renderState.textures()[i];
-
-                //     // figure out where the program expects this texture to be bound.
-                //     TextureBinding varIndex;
-                //     if (auto mstr = tex.idOrName.template maybe<String>())
-                //     {
-                //         varIndex = textureBinding((*mdc).renderState.program, *mstr);
-                //     }
-                //     else
-                //     {
-                //         varIndex = tex.idOrName.template get<TextureBinding>();
-                //     }
-
-                //     if (varIndex.index == TextureBinding::InvalidIndex)
-                //         return Error(ec::InvalidOperation,
-                //                      "Invalid texture binding",
-                //                      STICK_FILE,
-                //                      STICK_LINE);
-
-                //     GLTexture & gltex = m_textures[tex.value.index];
-
-                //     // if this is a render target, check if we need to blit
-                //     if (gltex.renderBuffer)
-                //     {
-                //         finalizeRenderBufferForReading(m_renderBuffers[gltex.renderBuffer.index],
-                //                                        passRenderBuffer);
-                //     }
-
-                //     // only rebind if the last bound texture at the texture unit is different
-                //     if (m_lastBoundTextures[varIndex.index] != tex.value)
-                //     {
-                //         ASSERT_NO_GL_ERROR(glActiveTexture(GL_TEXTURE0 + varIndex.index));
-                //         ASSERT_NO_GL_ERROR(glBindTexture(GL_TEXTURE_2D, gltex.glHandle));
-                //         m_lastBoundTextures[varIndex.index] = tex.value.index;
-                //     }
-                // }
 
                 // draw the mesh
                 ASSERT_NO_GL_ERROR(glBindVertexArray(mesh->m_glVao));
@@ -1464,7 +1479,6 @@ GLVertexBuffer::~GLVertexBuffer()
 
 void GLVertexBuffer::loadDataRaw(const void * _data, Size _byteCount)
 {
-    printf("LOAD DATA RAW\n");
     //@TODO: Take usage into account
     ASSERT_NO_GL_ERROR(glBindBuffer(GL_ARRAY_BUFFER, m_glVertexBuffer));
     ASSERT_NO_GL_ERROR(glBufferData(GL_ARRAY_BUFFER, _byteCount, _data, GL_STATIC_DRAW));
@@ -1542,7 +1556,8 @@ void GLRenderPass::reset()
 GLTexture::GLTexture(GLuint _glTex) :
     m_glTexture(_glTex),
     m_glTarget(GL_TEXTURE_2D),
-    m_format(TextureFormat::RGBA8)
+    m_format(TextureFormat::RGBA8),
+    m_renderBuffer(nullptr)
 {
 }
 
@@ -1615,6 +1630,8 @@ GLRenderBuffer::GLRenderBuffer(Allocator & _alloc,
     m_sampleCount(_sampleCount),
     m_glFBO(_fbo),
     m_glMSAAFBO(_msaaFbo),
+    m_renderTargets(_alloc),
+    m_colorAttachmentPoints(_alloc),
     m_colorTargets(_alloc),
     m_depthStencilTarget(nullptr),
     m_bDirty(true)
@@ -1646,8 +1663,75 @@ UInt32 GLRenderBuffer::sampleCount() const
     return m_sampleCount;
 }
 
-void GLRenderBuffer::finalizeForReading()
+void GLRenderBuffer::finalizeForReading(GLRenderBuffer * _currentBuffer)
 {
+    if (m_bDirty)
+    {
+        if (m_sampleCount > 1)
+        {
+            for (auto & target : m_renderTargets)
+            {
+                ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_READ_FRAMEBUFFER, m_glMSAAFBO));
+                if (target.attachmentPoint != GL_DEPTH_ATTACHMENT &&
+                    target.attachmentPoint != GL_DEPTH_STENCIL_ATTACHMENT)
+                {
+                    ASSERT_NO_GL_ERROR(glReadBuffer(target.attachmentPoint));
+                }
+
+                ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_glFBO));
+                if (target.attachmentPoint != GL_DEPTH_ATTACHMENT &&
+                    target.attachmentPoint != GL_DEPTH_STENCIL_ATTACHMENT)
+                {
+                    ASSERT_NO_GL_ERROR(glDrawBuffer(target.attachmentPoint));
+                }
+                if (target.attachmentPoint == GL_DEPTH_ATTACHMENT)
+                {
+                    ASSERT_NO_GL_ERROR(glBlitFramebuffer(0,
+                                                         0,
+                                                         (GLuint)m_width,
+                                                         (GLuint)m_height,
+                                                         0,
+                                                         0,
+                                                         (GLuint)m_width,
+                                                         (GLuint)m_height,
+                                                         GL_DEPTH_BUFFER_BIT,
+                                                         GL_NEAREST));
+                }
+                else if (target.attachmentPoint == GL_DEPTH_STENCIL_ATTACHMENT)
+                {
+                    ASSERT_NO_GL_ERROR(
+                        glBlitFramebuffer(0,
+                                          0,
+                                          (GLuint)m_width,
+                                          (GLuint)m_height,
+                                          0,
+                                          0,
+                                          (GLuint)m_width,
+                                          (GLuint)m_height,
+                                          GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT,
+                                          GL_NEAREST));
+                }
+                else
+                {
+                    ASSERT_NO_GL_ERROR(glBlitFramebuffer(0,
+                                                         0,
+                                                         (GLuint)m_width,
+                                                         (GLuint)m_height,
+                                                         0,
+                                                         0,
+                                                         (GLuint)m_width,
+                                                         (GLuint)m_height,
+                                                         GL_COLOR_BUFFER_BIT,
+                                                         GL_NEAREST));
+                }
+            }
+        }
+
+        m_bDirty = false;
+
+        // rebind the previous buffer
+        bindRenderBufferImpl(_currentBuffer, false);
+    }
 }
 
 } // namespace gl

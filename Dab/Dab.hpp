@@ -397,6 +397,7 @@ struct STICK_API PipelineSettings
     Program * program;
     Rect viewport;
     stick::Maybe<Rect> scissor;
+    bool multisample;
     bool depthTest;
     bool depthWrite;
     CompareFunction depthFunction;
@@ -463,7 +464,7 @@ class STICK_API RenderDevice
 
     virtual stick::Result<RenderBuffer *> createRenderBuffer(
         const RenderBufferSettings & _settings) = 0;
-    virtual void destroyRenderBuffer(RenderBuffer * _renderBuffer) = 0;
+    virtual void destroyRenderBuffer(RenderBuffer * _renderBuffer, bool _bDestroyRenderTargets) = 0;
 
     virtual RenderPass * beginPass(const RenderPassSettings & _settings = RenderPassSettings()) = 0;
     virtual void endPass(RenderPass * _pass) = 0;

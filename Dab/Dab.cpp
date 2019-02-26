@@ -53,6 +53,7 @@ void VertexLayout::finish()
 PipelineSettings::PipelineSettings(Program * _prog) :
     program(_prog),
     viewport({ 0, 0, 0, 0 }),
+    multisample(false),
     depthTest(false),
     depthWrite(false),
     depthFunction(CompareFunction::Less),

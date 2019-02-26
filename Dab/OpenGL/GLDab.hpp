@@ -237,6 +237,7 @@ class STICK_API GLMesh : public Mesh
     GLIndexBuffer * m_indexBuffer;
 };
 
+class GLRenderBuffer;
 class STICK_API GLTexture : public Texture
 {
   public:
@@ -254,6 +255,7 @@ class STICK_API GLTexture : public Texture
     GLuint m_glTexture;
     GLenum m_glTarget;
     TextureFormat m_format;
+    GLRenderBuffer * m_renderBuffer;
 };
 
 class STICK_API GLSampler : public Sampler
@@ -279,7 +281,7 @@ class STICK_API GLRenderBuffer : public RenderBuffer
     UInt32 width() const override;
     UInt32 height() const override;
     UInt32 sampleCount() const override;
-    void finalizeForReading();
+    void finalizeForReading(GLRenderBuffer * _currentBuffer);
 
     struct RenderTarget
     {
@@ -355,7 +357,7 @@ class STICK_API GLRenderDevice : public RenderDevice
     void destroySampler(Sampler * _sampler) override;
 
     Result<RenderBuffer *> createRenderBuffer(const RenderBufferSettings & _settings) override;
-    void destroyRenderBuffer(RenderBuffer * _renderBuffer) override;
+    void destroyRenderBuffer(RenderBuffer * _renderBuffer, bool _bDestroyRenderTargets) override;
 
     RenderPass * beginPass(const RenderPassSettings & _settings) override;
     void endPass(RenderPass * _pass) override;
@@ -416,7 +418,7 @@ class STICK_API GLRenderPass : public RenderPass
     void reset();
 
     GLRenderDevice * m_device;
-    RenderBuffer * m_renderBuffer;
+    GLRenderBuffer * m_renderBuffer;
     GLCmdBuffer m_commands;
 };
 
