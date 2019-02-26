@@ -1,0 +1,6 @@
+[submodule "subprojects/Stick"]
+	path = subprojects/Stick
+	url = https://github.com/mokafolio/Stick.git
+[submodule "subprojects/Luke"]
+	path = subprojects/Luke
+	url = https://github.com/mokafolio/Luke.git

@@ -1,0 +1,2 @@
+option('buildSubmodules', type : 'boolean', value : false, yield : true)
+option('buildExamples', type : 'boolean', value : 'false')
