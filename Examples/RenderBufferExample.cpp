@@ -144,6 +144,7 @@ int main(int _argc, const char * _args[])
         window.swapBuffers();
     }
 
+    printf("END BRO\n");
     destroyRenderDevice(device);
 
     return EXIT_SUCCESS;

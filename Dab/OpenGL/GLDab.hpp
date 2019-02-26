@@ -122,7 +122,8 @@ class STICK_API GLProgram : public Program
     friend class GLRenderDevice;
 
   public:
-    GLProgram(GLuint _prog);
+    GLProgram();
+    Error init(Allocator & _alloc, const char * _vertexShader, const char * _pixelShader);
     ~GLProgram() override;
 
     GLuint m_glProgram;
@@ -180,7 +181,7 @@ class STICK_API GLPipeline : public Pipeline
     friend class GLRenderDevice;
 
   public:
-    GLPipeline(Allocator & _alloc);
+    GLPipeline(Allocator & _alloc, const PipelineSettings & _settings);
     ~GLPipeline() override;
     PipelineVariable * variable(const char * _name) override;
     PipelineTexture * texture(const char * _name) override;
@@ -201,7 +202,7 @@ class STICK_API GLVertexBuffer : public VertexBuffer
     friend class GLRenderDevice;
 
   public:
-    GLVertexBuffer(GLuint _vb, BufferUsageFlags _flags);
+    GLVertexBuffer(BufferUsageFlags _flags);
 
     ~GLVertexBuffer() override;
 
@@ -216,13 +217,14 @@ class STICK_API GLIndexBuffer : public IndexBuffer
     friend class GLRenderDevice;
 
   public:
-    GLIndexBuffer(GLuint _indexBuffer);
+    GLIndexBuffer(BufferUsageFlags _flags);
 
     ~GLIndexBuffer() override;
 
     void loadDataRaw(const void * _data, Size _byteCount) override;
 
     GLuint m_glIndexBuffer;
+    BufferUsageFlags m_usageFlags;
 };
 
 class STICK_API GLMesh : public Mesh
@@ -230,7 +232,12 @@ class STICK_API GLMesh : public Mesh
   public:
     friend class GLRenderDevice;
 
-    GLMesh(Allocator & _alloc, GLuint _vao);
+    GLMesh(Allocator & _alloc,
+           VertexBuffer ** _vertexBuffers,
+           const VertexLayout * _layouts,
+           Size _count,
+           IndexBuffer * _indexBuffer);
+    ~GLMesh() override;
 
     GLuint m_glVao;
     DynamicArray<GLVertexBuffer *> m_vertexBuffers;
@@ -241,7 +248,8 @@ class GLRenderBuffer;
 class STICK_API GLTexture : public Texture
 {
   public:
-    GLTexture(GLuint _glTex);
+    GLTexture();
+    ~GLTexture() override;
 
     void loadPixels(UInt32 _width,
                     UInt32 _height,
@@ -261,20 +269,22 @@ class STICK_API GLTexture : public Texture
 class STICK_API GLSampler : public Sampler
 {
   public:
-    GLSampler(GLuint _glSampler);
+    GLSampler(const SamplerSettings & _settings);
+    ~GLSampler() override;
 
     GLuint m_glSampler;
 };
 
+class GLRenderDevice;
 class STICK_API GLRenderBuffer : public RenderBuffer
 {
   public:
-    GLRenderBuffer(Allocator & _alloc,
-                   UInt32 _width,
-                   UInt32 _height,
-                   UInt32 _sampleCount,
-                   GLuint _fbo,
-                   GLuint _msaaFbo);
+
+    GLRenderBuffer(GLRenderDevice * _device);
+
+    Error init(const RenderBufferSettings & _settings);
+
+    ~GLRenderBuffer() override;
 
     const DynamicArray<Texture *> colorTargets() const override;
     Texture * depthStencilTarget() const override;
@@ -282,6 +292,7 @@ class STICK_API GLRenderBuffer : public RenderBuffer
     UInt32 height() const override;
     UInt32 sampleCount() const override;
     void finalizeForReading(GLRenderBuffer * _currentBuffer);
+    void deallocate(bool _bDestroyRenderTargets);
 
     struct RenderTarget
     {
@@ -291,6 +302,7 @@ class STICK_API GLRenderBuffer : public RenderBuffer
         bool bIsDepthTarget;
     };
 
+    GLRenderDevice * m_device;
     UInt32 m_width;
     UInt32 m_height;
     UInt32 m_sampleCount;
