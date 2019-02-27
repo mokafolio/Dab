@@ -560,10 +560,12 @@ RenderPass * GLRenderDevice::beginPass(const RenderPassSettings & _settings)
 {
     STICK_ASSERT(m_bInFrame);
     GLRenderPass * ret;
+
     if (m_renderPassFreeList.count())
     {
-        ret = m_renderPasses.last().get();
+        ret = m_renderPassFreeList.last();
         ret->reset();
+        m_renderPassFreeList.removeLast();
     }
     else
     {
@@ -621,22 +623,16 @@ static void bindRenderBufferImpl(GLRenderBuffer * _rb, bool _bMarkDirty)
     if (_rb)
     {
         if (_rb->m_glMSAAFBO)
-        {
             ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, _rb->m_glMSAAFBO));
-        }
         else
-        {
             ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, _rb->m_glFBO));
-        }
 
         _rb->m_bDirty = _bMarkDirty;
         ASSERT_NO_GL_ERROR(glDrawBuffers((GLuint)_rb->m_colorAttachmentPoints.count(),
                                          &_rb->m_colorAttachmentPoints[0]));
     }
     else
-    {
         ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, 0));
-    }
 }
 
 Error GLRenderDevice::endFrame()
@@ -1384,6 +1380,7 @@ void GLRenderPass::clearBuffers(const ClearSettings & _settings)
 
 void GLRenderPass::reset()
 {
+    m_renderBuffer = nullptr;
     m_commands.clear();
 }
 
@@ -1563,6 +1560,7 @@ Error GLRenderBuffer::init(const RenderBufferSettings & _settings)
         ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, m_glFBO));
 
         GLRenderBuffer::RenderTarget target = { 0 };
+        target.texture = tex.get();
         if (bIsColorAttachment)
         {
             ASSERT_NO_GL_ERROR(glFramebufferTexture2D(GL_FRAMEBUFFER,
@@ -1571,7 +1569,6 @@ Error GLRenderBuffer::init(const RenderBufferSettings & _settings)
                                                       texHandle,
                                                       0));
             m_colorAttachmentPoints.append(GL_COLOR_ATTACHMENT0 + nextColorTargetID);
-            target.texture = tex.get();
             target.attachmentPoint = GL_COLOR_ATTACHMENT0 + nextColorTargetID;
             target.bIsDepthTarget = false;
             m_colorTargets.append(tex.get());
@@ -1658,7 +1655,7 @@ Error GLRenderBuffer::init(const RenderBufferSettings & _settings)
 
 GLRenderBuffer::~GLRenderBuffer()
 {
-    deallocate(true);
+    deallocate(false);
 }
 
 void GLRenderBuffer::deallocate(bool _bDestroyRenderTargets)
@@ -1680,7 +1677,9 @@ void GLRenderBuffer::deallocate(bool _bDestroyRenderTargets)
     {
         rt.texture->m_renderBuffer = nullptr;
         if (_bDestroyRenderTargets)
+        {
             m_device->destroyTexture(rt.texture);
+        }
     }
 
     /* we use this is a flag to signal that the renderbuffer has been deallocated already */
