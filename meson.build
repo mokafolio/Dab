@@ -31,12 +31,16 @@ dabDeps = []
 dabExampleDeps = []
 if get_option('buildSubmodules') == false
     dabDeps += [cc.find_library('Stick'), dependency('threads')]
-    dabExampleDeps += [cc.find_library('Luke', required: true), dependency('sdl2')]
+    if get_option('buildExamples') == true
+        dabExampleDeps += [cc.find_library('Luke', required: true), dependency('sdl2')]
+    endif
 else
     stickProj = subproject('Stick')
     dabDeps += stickProj.get_variable('stickDep')
-    lukeProj = subproject('Luke')
-    dabExampleDeps += lukeProj.get_variable('lukeDep')
+    if get_option('buildExamples') == true
+        lukeProj = subproject('Luke')
+        dabExampleDeps += lukeProj.get_variable('lukeDep')
+    endif
 endif
 
 dabDeps += dependency('GL')
