@@ -6,35 +6,6 @@
 
 #include <functional>
 
-// #define DAB_HANDLE(name)                                                                           \
-//     class STICK_API name                                                                           \
-//     {                                                                                              \
-//         friend class detail::RenderDeviceImpl;                                                     \
-//                                                                                                    \
-//       public:                                                                                      \
-//         name() : m_index(-1), m_rimpl(nullptr)                                                     \
-//         {                                                                                          \
-//         }                                                                                          \
-//         bool isValid() const                                                                       \
-//         {                                                                                          \
-//             return m_index != (stick::Size)-1;                                                     \
-//         }                                                                                          \
-//         bool operator==(const name & _other) const                                                 \
-//         {                                                                                          \
-//             return m_index == _other.m_index;                                                      \
-//         }                                                                                          \
-//         bool operator!=(const name & _other) const                                                 \
-//         {                                                                                          \
-//             return !(*this == _other);                                                             \
-//         }                                                                                          \
-//                                                                                                    \
-//       private:                                                                                     \
-//         name(stick::Size _index) : m_index(_index)                                                 \
-//         {                                                                                          \
-//         }                                                                                          \
-//         stick::Size m_index;                                                                       \
-//     };
-
 namespace dab
 {
 
@@ -333,17 +304,6 @@ struct STICK_API VertexLayout
     VertexElementArray elements;
 };
 
-// DAB_HANDLE(VertexShader);
-// DAB_HANDLE(PixelShader);
-// DAB_HANDLE(Program);
-// DAB_HANDLE(Pipeline);
-// DAB_HANDLE(PipelineVariable);
-// DAB_HANDLE(VertexBuffer);
-// DAB_HANDLE(IndexBuffer);
-// DAB_HANDLE(Mesh);
-// DAB_HANDLE(Texture);
-// DAB_HANDLE(RenderBuffer);
-
 class Program;
 class Pipeline;
 class PipelineVariable;
@@ -473,6 +433,13 @@ class STICK_API RenderDevice
 
     virtual void beginFrame() = 0;
     virtual stick::Error endFrame() = 0;
+
+    virtual void readPixels(stick::Int32 _x,
+                            stick::Int32 _y,
+                            stick::Int32 _w,
+                            stick::Int32 _h,
+                            TextureFormat _format,
+                            void * _outData) = 0;
 
   protected:
     RenderDevice()

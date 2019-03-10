@@ -277,7 +277,6 @@ class GLRenderDevice;
 class STICK_API GLRenderBuffer : public RenderBuffer
 {
   public:
-
     GLRenderBuffer(GLRenderDevice * _device);
 
     Error init(const RenderBufferSettings & _settings);
@@ -374,6 +373,13 @@ class STICK_API GLRenderDevice : public RenderDevice
 
     void beginFrame() override;
     stick::Error endFrame() override;
+
+    void readPixels(Int32 _x,
+                    Int32 _y,
+                    Int32 _w,
+                    Int32 _h,
+                    TextureFormat _format,
+                    void * _outData) override;
 
     UInt32 copyToUBO(Size _byteCount, const void * _data);
 

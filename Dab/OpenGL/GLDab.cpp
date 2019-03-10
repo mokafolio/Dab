@@ -75,74 +75,72 @@ struct GLTextureFormat
 {
     GLenum glFormat;
     GLenum glInternalFormat;
+    GLenum glDataType; // the corresponding, native gl data type
 };
 
 static GLTextureFormat s_glTextureFormats[] = {
     // R8
-    {
-        GL_RED,
-        GL_R8,
-    },
+    { GL_RED, GL_R8, GL_UNSIGNED_BYTE },
     // R16
-    { GL_RED, GL_R16 },
+    { GL_RED, GL_R16, GL_UNSIGNED_SHORT },
     // R32
-    { GL_RED, GL_R32UI },
+    { GL_RED, GL_R32UI, GL_UNSIGNED_INT },
     // R16F
-    { GL_RED, GL_R16F },
+    { GL_RED, GL_R16F, GL_FLOAT },
     // R32F
-    { GL_RED, GL_R32F },
+    { GL_RED, GL_R32F, GL_FLOAT },
     // RGB8
-    { GL_RGB, GL_RGB8 },
+    { GL_RGB, GL_RGB8, GL_UNSIGNED_BYTE },
     // RGB16
-    { GL_RGB, GL_RGB16 },
+    { GL_RGB, GL_RGB16, GL_UNSIGNED_SHORT },
     // RGB32
-    { GL_RGB, GL_RGB32UI },
+    { GL_RGB, GL_RGB32UI, GL_UNSIGNED_INT },
     // RGB16F
-    { GL_RGB, GL_RGB16F },
+    { GL_RGB, GL_RGB16F, GL_FLOAT },
     // RGB32F
-    { GL_RGB, GL_RGB32F },
+    { GL_RGB, GL_RGB32F, GL_FLOAT },
     // BGR8
-    { GL_BGR, GL_RGB8 },
+    { GL_BGR, GL_RGB8, GL_UNSIGNED_BYTE },
     // BGR16
-    { GL_BGR, GL_RGB16 },
+    { GL_BGR, GL_RGB16, GL_UNSIGNED_SHORT },
     // BGR32
-    { GL_BGR, GL_RGB32UI },
+    { GL_BGR, GL_RGB32UI, GL_UNSIGNED_INT },
     // BGR16F
-    { GL_BGR, GL_RGB16F },
+    { GL_BGR, GL_RGB16F, GL_FLOAT },
     // BGR32F
-    { GL_BGR, GL_RGB32F },
+    { GL_BGR, GL_RGB32F, GL_FLOAT },
     // RGBA8
-    { GL_RGBA, GL_RGBA8 },
+    { GL_RGBA, GL_RGBA8, GL_UNSIGNED_BYTE },
     // RGBA16
-    { GL_RGBA, GL_RGBA16 },
+    { GL_RGBA, GL_RGBA16, GL_UNSIGNED_SHORT },
     // RGBA32
-    { GL_RGBA, GL_RGBA32UI },
+    { GL_RGBA, GL_RGBA32UI, GL_UNSIGNED_INT },
     // RGBA16F
-    { GL_RGBA, GL_RGBA16F },
+    { GL_RGBA, GL_RGBA16F, GL_FLOAT },
     // RGBA32F
-    { GL_RGBA, GL_RGBA32F },
+    { GL_RGBA, GL_RGBA32F, GL_FLOAT },
     // BGRA8
-    { GL_BGRA, GL_RGBA8 },
+    { GL_BGRA, GL_RGBA8, GL_UNSIGNED_BYTE },
     // BGRA16
-    { GL_BGRA, GL_RGBA16 },
+    { GL_BGRA, GL_RGBA16, GL_UNSIGNED_SHORT },
     // BGRA32
-    { GL_BGRA, GL_RGBA32UI },
+    { GL_BGRA, GL_RGBA32UI, GL_UNSIGNED_INT },
     // BGRA16F
-    { GL_BGRA, GL_RGBA16F },
+    { GL_BGRA, GL_RGBA16F, GL_FLOAT },
     // BGRA32F
-    { GL_BGRA, GL_RGBA32F },
+    { GL_BGRA, GL_RGBA32F, GL_FLOAT },
     // Depth16
-    { GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT16 },
+    { GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT16, GL_SHORT },
     // Depth24
-    { GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT24 },
+    { GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT24, GL_UNSIGNED_INT },
     // Depth32
-    { GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT32 },
+    { GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT32, GL_UNSIGNED_INT },
     // Depth24Stencil8
-    { GL_DEPTH_STENCIL, GL_DEPTH24_STENCIL8 },
+    { GL_DEPTH_STENCIL, GL_DEPTH24_STENCIL8, GL_UNSIGNED_INT_24_8 },
     // Depth32F
-    { GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT32F },
+    { GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT32F, GL_FLOAT },
     // Depth32FStencil8
-    { GL_DEPTH_STENCIL, GL_DEPTH32F_STENCIL8 }
+    { GL_DEPTH_STENCIL, GL_DEPTH32F_STENCIL8, GL_FLOAT_32_UNSIGNED_INT_24_8_REV }
 };
 
 static_assert((Size)TextureFormat::Count ==
@@ -894,6 +892,13 @@ Error GLRenderDevice::endFrame()
     m_bInFrame = false;
 
     return err;
+}
+
+void GLRenderDevice::readPixels(
+    Int32 _x, Int32 _y, Int32 _w, Int32 _h, TextureFormat _format, void * _outData)
+{
+    GLTextureFormat fmt = s_glTextureFormats[(Size)_format];
+    ASSERT_NO_GL_ERROR(glReadPixels(_x, _y, _w, _h, fmt.glFormat, fmt.glDataType, _outData));
 }
 
 UInt32 GLRenderDevice::copyToUBO(Size _byteCount, const void * _data)
