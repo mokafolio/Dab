@@ -898,6 +898,7 @@ void GLRenderDevice::readPixels(
     Int32 _x, Int32 _y, Int32 _w, Int32 _h, TextureFormat _format, void * _outData)
 {
     GLTextureFormat fmt = s_glTextureFormats[(Size)_format];
+    //@TODO: should propably set glReadBuffers here
     ASSERT_NO_GL_ERROR(glReadPixels(_x, _y, _w, _h, fmt.glFormat, fmt.glDataType, _outData));
 }
 
@@ -1107,6 +1108,35 @@ GLPipeline::GLPipeline(Allocator & _alloc, const PipelineSettings & _settings) :
     setFlag(renderState, RF_ColorWriteAlpha, _settings.colorWriteSettings.a);
     setFlag(renderState, RF_FrontFaceClockwise, _settings.faceDirection == FaceDirection::CW);
     setField(renderState, RF_CullFaceShift, RF_CullFaceMask, _settings.cullFace);
+
+    if (_settings.blendSettings)
+    {
+        setFlag(renderState, RF_Blending, true);
+        setField(renderState,
+                 RF_ColorBlendModeShift,
+                 RF_ColorBlendModeMask,
+                 s_glBlendModes[(Size)_settings.blendSettings->colorBlendMode]);
+        setField(renderState,
+                 RF_AlphaBlendModeShift,
+                 RF_AlphaBlendModeMask,
+                 s_glBlendModes[(Size)_settings.blendSettings->alphaBlendMode]);
+        setField(renderState,
+                 RF_ColorSourceBlendFuncShift,
+                 RF_ColorSourceBlendFuncMask,
+                 s_glBlendFuncs[(Size)_settings.blendSettings->colorSrcBlendFunction]);
+        setField(renderState,
+                 RF_ColorDestBlendFuncShift,
+                 RF_ColorDestBlendFuncMask,
+                 s_glBlendFuncs[(Size)_settings.blendSettings->colorDestBlendFunction]);
+        setField(renderState,
+                 RF_AlphaSourceBlendFuncShift,
+                 RF_AlphaSourceBlendFuncMask,
+                 s_glBlendFuncs[(Size)_settings.blendSettings->alphaSrcBlendFunction]);
+        setField(renderState,
+                 RF_AlphaDestBlendFuncShift,
+                 RF_AlphaDestBlendFuncMask,
+                 s_glBlendFuncs[(Size)_settings.blendSettings->alphaDestBlendFunction]);
+    }
 
     m_program = static_cast<GLProgram *>(_settings.program);
     m_renderState = renderState;

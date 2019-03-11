@@ -100,4 +100,24 @@ SamplerSettings::SamplerSettings() :
 {
 }
 
+BlendSettings::BlendSettings()
+{
+    setBlendMode(BlendMode::Add);
+    setBlendFunction(BlendFunction::SourceAlpha, BlendFunction::InverseSourceAlpha);
+}
+
+void BlendSettings::setBlendMode(BlendMode _mode)
+{
+    colorBlendMode = _mode;
+    alphaBlendMode = _mode;
+}
+
+void BlendSettings::setBlendFunction(BlendFunction _srcFunc, BlendFunction _destFunc)
+{
+    colorSrcBlendFunction = _srcFunc;
+    colorDestBlendFunction = _destFunc;
+    alphaSrcBlendFunction = _srcFunc;
+    alphaDestBlendFunction = _destFunc;
+}
+
 } // namespace dab

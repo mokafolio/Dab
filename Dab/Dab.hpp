@@ -345,6 +345,18 @@ struct STICK_API RenderPassSettings
 
 struct STICK_API BlendSettings
 {
+    BlendSettings();
+
+    //helpers to set blend mode / function for color and alpha together
+    void setBlendMode(BlendMode _mode);
+    void setBlendFunction(BlendFunction _srcFunc, BlendFunction _destFunc);
+
+    BlendMode colorBlendMode;
+    BlendFunction colorSrcBlendFunction;
+    BlendFunction colorDestBlendFunction;
+    BlendMode alphaBlendMode;
+    BlendFunction alphaSrcBlendFunction;
+    BlendFunction alphaDestBlendFunction;
 };
 
 struct STICK_API ColorWriteSettings
