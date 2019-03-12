@@ -347,7 +347,7 @@ struct STICK_API BlendSettings
 {
     BlendSettings();
 
-    //helpers to set blend mode / function for color and alpha together
+    // helpers to set blend mode / function for color and alpha together
     void setBlendMode(BlendMode _mode);
     void setBlendFunction(BlendFunction _srcFunc, BlendFunction _destFunc);
 
@@ -641,8 +641,16 @@ class STICK_API RenderPass
                           UInt32 _vertexCount,
                           VertexDrawMode _drawMode) = 0;
 
+    virtual void drawMesh(const Mesh * _mesh,
+                          const Pipeline * _pipeline,
+                          UInt32 _vertexOffset,
+                          UInt32 _vertexCount,
+                          UInt32 _baseVertex,
+                          VertexDrawMode _drawMode) = 0;
+
     virtual void drawCustom(ExternalDrawFunction _fn) = 0;
-    virtual void setViewport(Float32 _x, Float32 _y, Float32 _w, Float32 _h) = 0;
+    virtual void setViewport(Int32 _x, Int32 _y, UInt32 _w, UInt32 _h) = 0;
+    virtual void setScissor(Int32 _x, Int32 _y, UInt32 _w, UInt32 _h) = 0;
     virtual void clearBuffers(const ClearSettings & _settings) = 0;
 
   protected:

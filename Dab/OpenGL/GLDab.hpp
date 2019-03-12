@@ -318,6 +318,7 @@ struct STICK_API GLDrawCmd
     const GLPipeline * pipeline;
     UInt32 vertexOffset;
     UInt32 vertexCount;
+    UInt32 baseVertex;
     VertexDrawMode drawMode;
     GLUBOBindingArray uboBindings;
 };
@@ -329,7 +330,14 @@ struct STICK_API GLExternalDrawCmd
 
 struct STICK_API GLViewportCmd
 {
-    Rect rect;
+    Int32 x, y;
+    UInt32 w, h;
+};
+
+struct STICK_API GLScissorCmd
+{
+    Int32 x, y;
+    UInt32 w, h;
 };
 
 struct STICK_API GLClearCmd
@@ -374,12 +382,8 @@ class STICK_API GLRenderDevice : public RenderDevice
     void beginFrame() override;
     stick::Error endFrame() override;
 
-    void readPixels(Int32 _x,
-                    Int32 _y,
-                    Int32 _w,
-                    Int32 _h,
-                    TextureFormat _format,
-                    void * _outData) override;
+    void readPixels(
+        Int32 _x, Int32 _y, Int32 _w, Int32 _h, TextureFormat _format, void * _outData) override;
 
     UInt32 copyToUBO(Size _byteCount, const void * _data);
 
@@ -411,13 +415,15 @@ class STICK_API GLRenderDevice : public RenderDevice
     DynamicArray<GLRenderPass *> m_currentRenderPasses; // renderpasses queued for the current frame
     bool m_bInFrame;
     Maybe<GLDrawCmd> m_lastDrawCall;
+    UInt64 m_lastRenderState; // if there is a last drawcall, we will store its renderstate in here
+                              // because we need it to be mutable
     GLuint m_ubo;
     UInt8 * m_mappedUBO;
     UInt32 m_mappedUBOOffset;
     UInt32 m_uboOffsetAlignment;
 };
 
-using GLCmd = stick::Variant<GLDrawCmd, GLExternalDrawCmd, GLViewportCmd, GLClearCmd>;
+using GLCmd = stick::Variant<GLDrawCmd, GLExternalDrawCmd, GLViewportCmd, GLScissorCmd, GLClearCmd>;
 using GLCmdBuffer = stick::DynamicArray<GLCmd>;
 
 class STICK_API GLRenderPass : public RenderPass
@@ -430,9 +436,17 @@ class STICK_API GLRenderPass : public RenderPass
                   UInt32 _vertexCount,
                   VertexDrawMode _drawMode) override;
 
+    void drawMesh(const Mesh * _mesh,
+                  const Pipeline * _pipeline,
+                  UInt32 _vertexOffset,
+                  UInt32 _vertexCount,
+                  UInt32 _baseVertex,
+                  VertexDrawMode _drawMode) override;
+
     void drawCustom(ExternalDrawFunction _fn) override;
 
-    void setViewport(Float32 _x, Float32 _y, Float32 _w, Float32 _h) override;
+    void setViewport(Int32 _x, Int32 _y, UInt32 _w, UInt32 _h) override;
+    void setScissor(Int32 _x, Int32 _y, UInt32 _w, UInt32 _h) override;
     void clearBuffers(const ClearSettings & _settings) override;
     void reset();
 

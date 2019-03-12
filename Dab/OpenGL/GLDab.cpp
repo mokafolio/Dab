@@ -648,6 +648,8 @@ Error GLRenderDevice::endFrame()
     for (auto * pass : m_currentRenderPasses)
     {
         bindRenderBufferImpl(pass->m_renderBuffer, true);
+        bool bScissorSetByCmd = false;
+
         for (auto & cmd : pass->m_commands)
         {
             if (auto mcc = cmd.maybe<GLClearCmd>())
@@ -657,7 +659,15 @@ Error GLRenderDevice::endFrame()
             else if (auto mvc = cmd.maybe<GLViewportCmd>())
             {
                 ASSERT_NO_GL_ERROR(glViewport(
-                    (*mvc).rect.x, (*mvc).rect.y, (*mvc).rect.width, (*mvc).rect.height));
+                    (*mvc).x, (*mvc).y, (*mvc).w, (*mvc).h));
+            }
+            else if (auto mvc = cmd.maybe<GLScissorCmd>())
+            {
+                ASSERT_NO_GL_ERROR(glEnable(GL_SCISSOR_TEST));
+                ASSERT_NO_GL_ERROR(glScissor((*mvc).x, (*mvc).y, (*mvc).w, (*mvc).h));
+                bScissorSetByCmd = true;
+                if(m_lastDrawCall)
+                    setFlag(m_lastRenderState, RF_ScissorTest, true);
             }
             else if (auto mdc = cmd.maybe<GLDrawCmd>())
             {
@@ -669,11 +679,12 @@ Error GLRenderDevice::endFrame()
                     ASSERT_NO_GL_ERROR(glUseProgram(program->m_glProgram));
 
                 UInt64 diffMask = m_lastDrawCall
-                                      ? differenceMask((*m_lastDrawCall).pipeline->m_renderState,
+                                      ? differenceMask(m_lastRenderState,
                                                        pipeline->m_renderState)
                                       : (UInt64)-1;
                 if (diffMask != 0)
                 {
+                    //@TODO: Make sure vieportrect is not float but integer based
                     if (isFlagSet(pipeline->m_renderState, RF_Viewport))
                     {
                         ASSERT_NO_GL_ERROR(glViewport(pipeline->m_viewportRect.x,
@@ -683,7 +694,9 @@ Error GLRenderDevice::endFrame()
                     }
 
                     // Scissor
-                    if (isFlagDifferent(diffMask, RF_ScissorTest))
+                    //@TODO: set actual scissor rect
+                    //@TODO: Add command to RenderPass to reset scissor
+                    if (isFlagDifferent(diffMask, RF_ScissorTest) && !bScissorSetByCmd)
                     {
                         if (isFlagSet(pipeline->m_renderState, RF_ScissorTest))
                         {
@@ -842,6 +855,7 @@ Error GLRenderDevice::endFrame()
                         if (!m_lastDrawCall ||
                             (*m_lastDrawCall).pipeline->m_textures[i].get() != tex)
                         {
+                            printf("binding texture\n");
                             ASSERT_NO_GL_ERROR(glActiveTexture(GL_TEXTURE0 + (GLuint)i));
                             ASSERT_NO_GL_ERROR(glBindTexture(tex->m_texture->m_glTarget,
                                                              tex->m_texture->m_glTexture));
@@ -855,11 +869,25 @@ Error GLRenderDevice::endFrame()
 
                 if (mesh->m_indexBuffer)
                 {
-                    ASSERT_NO_GL_ERROR(
-                        glDrawElements(glVertexMode,
-                                       (*mdc).vertexCount,
-                                       GL_UNSIGNED_INT,
-                                       BUFFER_OFFSET(sizeof(GLuint) * (*mdc).vertexOffset)));
+                    printf("VCOUNT %lu %lu\n", (*mdc).vertexCount, (*mdc).vertexOffset);
+
+                    if ((*mdc).baseVertex)
+                    {
+                        ASSERT_NO_GL_ERROR(glDrawElementsBaseVertex(
+                            glVertexMode,
+                            (*mdc).vertexCount,
+                            GL_UNSIGNED_INT,
+                            BUFFER_OFFSET(sizeof(GLuint) * (*mdc).vertexOffset),
+                            (*mdc).baseVertex));
+                    }
+                    else
+                    {
+                        ASSERT_NO_GL_ERROR(
+                            glDrawElements(glVertexMode,
+                                           (*mdc).vertexCount,
+                                           GL_UNSIGNED_INT,
+                                           BUFFER_OFFSET(sizeof(GLuint) * (*mdc).vertexOffset)));
+                    }
                 }
                 else
                 {
@@ -868,6 +896,7 @@ Error GLRenderDevice::endFrame()
                 }
 
                 m_lastDrawCall = *mdc;
+                m_lastRenderState = (*m_lastDrawCall).pipeline->m_renderState;
             }
             else if (auto mdc = cmd.maybe<GLExternalDrawCmd>())
             {
@@ -884,6 +913,9 @@ Error GLRenderDevice::endFrame()
                 m_lastDrawCall.reset();
             }
         }
+
+        if(bScissorSetByCmd)
+            ASSERT_NO_GL_ERROR(glDisable(GL_SCISSOR_TEST));
 
         pass->reset();
         m_renderPassFreeList.append(pass);
@@ -1115,27 +1147,27 @@ GLPipeline::GLPipeline(Allocator & _alloc, const PipelineSettings & _settings) :
         setField(renderState,
                  RF_ColorBlendModeShift,
                  RF_ColorBlendModeMask,
-                 s_glBlendModes[(Size)_settings.blendSettings->colorBlendMode]);
+                 _settings.blendSettings->colorBlendMode);
         setField(renderState,
                  RF_AlphaBlendModeShift,
                  RF_AlphaBlendModeMask,
-                 s_glBlendModes[(Size)_settings.blendSettings->alphaBlendMode]);
+                 _settings.blendSettings->alphaBlendMode);
         setField(renderState,
                  RF_ColorSourceBlendFuncShift,
                  RF_ColorSourceBlendFuncMask,
-                 s_glBlendFuncs[(Size)_settings.blendSettings->colorSrcBlendFunction]);
+                 _settings.blendSettings->colorSrcBlendFunction);
         setField(renderState,
                  RF_ColorDestBlendFuncShift,
                  RF_ColorDestBlendFuncMask,
-                 s_glBlendFuncs[(Size)_settings.blendSettings->colorDestBlendFunction]);
+                 _settings.blendSettings->colorDestBlendFunction);
         setField(renderState,
                  RF_AlphaSourceBlendFuncShift,
                  RF_AlphaSourceBlendFuncMask,
-                 s_glBlendFuncs[(Size)_settings.blendSettings->alphaSrcBlendFunction]);
+                 _settings.blendSettings->alphaSrcBlendFunction);
         setField(renderState,
                  RF_AlphaDestBlendFuncShift,
                  RF_AlphaDestBlendFuncMask,
-                 s_glBlendFuncs[(Size)_settings.blendSettings->alphaDestBlendFunction]);
+                 _settings.blendSettings->alphaDestBlendFunction);
     }
 
     m_program = static_cast<GLProgram *>(_settings.program);
@@ -1356,6 +1388,9 @@ GLMesh::GLMesh(Allocator & _alloc,
 
         m_vertexBuffers.append(vb);
     }
+
+    if (m_indexBuffer)
+        ASSERT_NO_GL_ERROR(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_indexBuffer->m_glIndexBuffer));
 }
 
 GLMesh::~GLMesh()
@@ -1373,6 +1408,16 @@ void GLRenderPass::drawMesh(const Mesh * _mesh,
                             const Pipeline * _pipeline,
                             UInt32 _vertexOffset,
                             UInt32 _vertexCount,
+                            VertexDrawMode _drawMode)
+{
+    drawMesh(_mesh, _pipeline, _vertexOffset, _vertexCount, 0, _drawMode);
+}
+
+void GLRenderPass::drawMesh(const Mesh * _mesh,
+                            const Pipeline * _pipeline,
+                            UInt32 _vertexOffset,
+                            UInt32 _vertexCount,
+                            UInt32 _baseVertex,
                             VertexDrawMode _drawMode)
 {
     // copy all the uniforms of the pipeline to the uniform buffer
@@ -1394,6 +1439,7 @@ void GLRenderPass::drawMesh(const Mesh * _mesh,
                                    static_cast<const GLPipeline *>(_pipeline),
                                    _vertexOffset,
                                    _vertexCount,
+                                   _baseVertex,
                                    _drawMode,
                                    std::move(bindings) });
 }
@@ -1403,9 +1449,14 @@ void GLRenderPass::drawCustom(ExternalDrawFunction _fn)
     m_commands.append((GLExternalDrawCmd){ _fn });
 }
 
-void GLRenderPass::setViewport(Float32 _x, Float32 _y, Float32 _w, Float32 _h)
+void GLRenderPass::setViewport(Int32 _x, Int32 _y, UInt32 _w, UInt32 _h)
 {
     m_commands.append((GLViewportCmd){ _x, _y, _w, _h });
+}
+
+void GLRenderPass::setScissor(Int32 _x, Int32 _y, UInt32 _w, UInt32 _h)
+{
+    m_commands.append((GLScissorCmd){ _x, _y, _w, _h });
 }
 
 void GLRenderPass::clearBuffers(const ClearSettings & _settings)
