@@ -855,7 +855,6 @@ Error GLRenderDevice::endFrame()
                         if (!m_lastDrawCall ||
                             (*m_lastDrawCall).pipeline->m_textures[i].get() != tex)
                         {
-                            printf("binding texture\n");
                             ASSERT_NO_GL_ERROR(glActiveTexture(GL_TEXTURE0 + (GLuint)i));
                             ASSERT_NO_GL_ERROR(glBindTexture(tex->m_texture->m_glTarget,
                                                              tex->m_texture->m_glTexture));
@@ -869,8 +868,6 @@ Error GLRenderDevice::endFrame()
 
                 if (mesh->m_indexBuffer)
                 {
-                    printf("VCOUNT %lu %lu\n", (*mdc).vertexCount, (*mdc).vertexOffset);
-
                     if ((*mdc).baseVertex)
                     {
                         ASSERT_NO_GL_ERROR(glDrawElementsBaseVertex(
