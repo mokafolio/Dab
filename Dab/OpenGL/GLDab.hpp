@@ -377,15 +377,10 @@ class STICK_API GLRenderDevice : public RenderDevice
     void destroyRenderBuffer(RenderBuffer * _renderBuffer, bool _bDestroyRenderTargets) override;
 
     RenderPass * beginPass(const RenderPassSettings & _settings) override;
-    void endPass(RenderPass * _pass) override;
-
-    void beginFrame() override;
-    stick::Error endFrame() override;
+    stick::Error endPass(RenderPass * _pass) override;
 
     void readPixels(
         Int32 _x, Int32 _y, Int32 _w, Int32 _h, TextureFormat _format, void * _outData) override;
-
-    UInt32 copyToUBO(Size _byteCount, const void * _data);
 
     // helper to remove from the storage arrays (i.e. m_programs, m_pipelines etc., see below)
     template <class T, class B>
@@ -412,14 +407,9 @@ class STICK_API GLRenderDevice : public RenderDevice
     DynamicArray<UniquePtr<GLRenderBuffer>> m_renderBuffers;
     DynamicArray<UniquePtr<GLRenderPass>> m_renderPasses; // all allocated render passes
     DynamicArray<GLRenderPass *> m_renderPassFreeList;    // unused render passes
-    DynamicArray<GLRenderPass *> m_currentRenderPasses; // renderpasses queued for the current frame
-    bool m_bInFrame;
     Maybe<GLDrawCmd> m_lastDrawCall;
     UInt64 m_lastRenderState; // if there is a last drawcall, we will store its renderstate in here
                               // because we need it to be mutable
-    GLuint m_ubo;
-    UInt8 * m_mappedUBO;
-    UInt32 m_mappedUBOOffset;
     UInt32 m_uboOffsetAlignment;
 };
 
@@ -430,6 +420,9 @@ class STICK_API GLRenderPass : public RenderPass
 {
   public:
     GLRenderPass(GLRenderDevice * _device, Allocator & _alloc);
+
+    ~GLRenderPass();
+
     void drawMesh(const Mesh * _mesh,
                   const Pipeline * _pipeline,
                   UInt32 _vertexOffset,
@@ -449,10 +442,15 @@ class STICK_API GLRenderPass : public RenderPass
     void setScissor(Int32 _x, Int32 _y, UInt32 _w, UInt32 _h) override;
     void clearBuffers(const ClearSettings & _settings) override;
     void reset();
+    void prepareDrawing();
+    UInt32 copyToUBO(Size _byteCount, const void * _data);
 
     GLRenderDevice * m_device;
     GLRenderBuffer * m_renderBuffer;
     GLCmdBuffer m_commands;
+    GLuint m_ubo; //buffers all the uniforms for the pass
+    UInt8 * m_mappedUBO;
+    UInt32 m_mappedUBOOffset;
 };
 
 } // namespace gl

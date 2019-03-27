@@ -125,20 +125,16 @@ int main(int _argc, const char * _args[])
     {
         luke::pollEvents();
 
-        device->beginFrame();
-
-        RenderPass * pass =
-            device->beginPass(RenderPassSettings(rb, ClearSettings(1.0, 1.0, 0.0, 1.0)));
+        RenderPass * pass = device->beginPass(RenderPassSettings(rb, ClearSettings(1.0, 1.0, 0.0, 1.0)));
         pass->setViewport(0, 0, rb->width(), rb->height());
         pass->drawMesh(mesh, pipe, 0, 3, VertexDrawMode::Triangles);
-        device->endPass(pass);
+        auto err = device->endPass(pass);
+        RETURN_ON_ERR(err);
 
         RenderPass * quadPass = device->beginPass(ClearSettings(0.0, 0.0, 0.0, 1.0));
         quadPass->setViewport(0, 0, window.widthInPixels(), window.heightInPixels());
         quadPass->drawMesh(quadMesh, texPipe, 0, 4, VertexDrawMode::TriangleStrip);
-        device->endPass(quadPass);
-
-        auto err = device->endFrame();
+        err = device->endPass(quadPass);
         RETURN_ON_ERR(err);
 
         window.swapBuffers();

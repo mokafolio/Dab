@@ -441,10 +441,7 @@ class STICK_API RenderDevice
     virtual void destroyRenderBuffer(RenderBuffer * _renderBuffer, bool _bDestroyRenderTargets) = 0;
 
     virtual RenderPass * beginPass(const RenderPassSettings & _settings = RenderPassSettings()) = 0;
-    virtual void endPass(RenderPass * _pass) = 0;
-
-    virtual void beginFrame() = 0;
-    virtual stick::Error endFrame() = 0;
+    virtual stick::Error endPass(RenderPass * _pass) = 0;
 
     virtual void readPixels(stick::Int32 _x,
                             stick::Int32 _y,

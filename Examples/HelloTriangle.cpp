@@ -75,14 +75,11 @@ int main(int _argc, const char * _args[])
     {
         luke::pollEvents();
 
-        device->beginFrame();
-
         RenderPass * pass = device->beginPass(ClearSettings(1.0, 1.0, 0.0, 1.0));
         pass->setViewport(0, 0, window.widthInPixels(), window.heightInPixels());
         pass->drawMesh(mesh, pipe, 0, 3, VertexDrawMode::Triangles);
-
-        device->endPass(pass);
-        auto err = device->endFrame();
+        
+        auto err = device->endPass(pass);
         RETURN_ON_ERR(err);
 
         window.swapBuffers();

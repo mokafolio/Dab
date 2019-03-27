@@ -298,20 +298,15 @@ GLRenderDevice::GLRenderDevice(Allocator & _alloc) :
     m_samplers(_alloc),
     m_renderBuffers(_alloc),
     m_renderPasses(_alloc),
-    m_renderPassFreeList(_alloc),
-    m_currentRenderPasses(_alloc),
-    m_bInFrame(false),
-    m_mappedUBO(nullptr)
+    m_renderPassFreeList(_alloc)
 {
     STICK_ASSERT(!gl3wInit());
-    ASSERT_NO_GL_ERROR(glGenBuffers(1, &m_ubo));
     ASSERT_NO_GL_ERROR(
         glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, (GLint *)&m_uboOffsetAlignment));
 }
 
 GLRenderDevice::~GLRenderDevice()
 {
-    glDeleteBuffers(1, &m_ubo);
     // all the other resources clean up after themselves in their respective destructors.
 }
 
@@ -556,13 +551,11 @@ void GLRenderDevice::destroyRenderBuffer(RenderBuffer * _rb, bool _bDestroyRende
 
 RenderPass * GLRenderDevice::beginPass(const RenderPassSettings & _settings)
 {
-    STICK_ASSERT(m_bInFrame);
     GLRenderPass * ret;
 
     if (m_renderPassFreeList.count())
     {
         ret = m_renderPassFreeList.last();
-        ret->reset();
         m_renderPassFreeList.removeLast();
     }
     else
@@ -570,27 +563,12 @@ RenderPass * GLRenderDevice::beginPass(const RenderPassSettings & _settings)
         m_renderPasses.append(makeUnique<GLRenderPass>(*m_alloc, this, *m_alloc));
         ret = m_renderPasses.last().get();
     }
+    ret->prepareDrawing();
     ret->m_renderBuffer = static_cast<GLRenderBuffer *>(_settings.renderBuffer);
     if (_settings.clear)
         ret->clearBuffers(*_settings.clear);
+
     return ret;
-}
-
-void GLRenderDevice::endPass(RenderPass * _pass)
-{
-    m_currentRenderPasses.append(static_cast<GLRenderPass *>(_pass));
-}
-
-void GLRenderDevice::beginFrame()
-{
-    STICK_ASSERT(m_currentRenderPasses.count() == 0 && !m_bInFrame);
-    m_bInFrame = true;
-
-    ASSERT_NO_GL_ERROR(glBindBuffer(GL_UNIFORM_BUFFER, m_ubo));
-    ASSERT_NO_GL_ERROR(glBufferData(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
-    m_mappedUBO = (UInt8 *)glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
-    m_mappedUBOOffset = 0;
-    STICK_ASSERT(m_mappedUBO);
 }
 
 static void clearBuffers(const ClearSettings & _clear)
@@ -633,297 +611,282 @@ static void bindRenderBufferImpl(GLRenderBuffer * _rb, bool _bMarkDirty)
         ASSERT_NO_GL_ERROR(glBindFramebuffer(GL_FRAMEBUFFER, 0));
 }
 
-Error GLRenderDevice::endFrame()
+stick::Error GLRenderDevice::endPass(RenderPass * _pass)
 {
-    Error err;
-    STICK_ASSERT(m_bInFrame);
+    GLRenderPass * pass = static_cast<GLRenderPass *>(_pass);
 
-    //@TODO: can we remove this extra binding by making we always return to the dab expected gl
-    // state i.e. after custom draw hooks?
-    ASSERT_NO_GL_ERROR(glBindBuffer(GL_UNIFORM_BUFFER, m_ubo));
+    ASSERT_NO_GL_ERROR(glBindBuffer(GL_UNIFORM_BUFFER, pass->m_ubo));
     ASSERT_NO_GL_ERROR(glUnmapBuffer(GL_UNIFORM_BUFFER));
-    m_mappedUBO = nullptr;
-    m_lastDrawCall.reset();
 
-    for (auto * pass : m_currentRenderPasses)
+    Maybe<GLDrawCmd> lastDrawCall;
+
+    bindRenderBufferImpl(pass->m_renderBuffer, true);
+    bool bScissorSetByCmd = false;
+    Error err;
+
+    for (auto & cmd : pass->m_commands)
     {
-        bindRenderBufferImpl(pass->m_renderBuffer, true);
-        bool bScissorSetByCmd = false;
-
-        for (auto & cmd : pass->m_commands)
+        if (auto mcc = cmd.maybe<GLClearCmd>())
         {
-            if (auto mcc = cmd.maybe<GLClearCmd>())
-            {
-                clearBuffers((*mcc).settings);
-            }
-            else if (auto mvc = cmd.maybe<GLViewportCmd>())
-            {
-                ASSERT_NO_GL_ERROR(glViewport(
-                    (*mvc).x, (*mvc).y, (*mvc).w, (*mvc).h));
-            }
-            else if (auto mvc = cmd.maybe<GLScissorCmd>())
-            {
-                ASSERT_NO_GL_ERROR(glEnable(GL_SCISSOR_TEST));
-                ASSERT_NO_GL_ERROR(glScissor((*mvc).x, (*mvc).y, (*mvc).w, (*mvc).h));
-                bScissorSetByCmd = true;
-                if(m_lastDrawCall)
-                    setFlag(m_lastRenderState, RF_ScissorTest, true);
-            }
-            else if (auto mdc = cmd.maybe<GLDrawCmd>())
-            {
-                const GLPipeline * pipeline = (*mdc).pipeline;
-                const GLProgram * program = pipeline->m_program;
-                const GLMesh * mesh = (*mdc).mesh;
+            clearBuffers((*mcc).settings);
+        }
+        else if (auto mvc = cmd.maybe<GLViewportCmd>())
+        {
+            ASSERT_NO_GL_ERROR(glViewport((*mvc).x, (*mvc).y, (*mvc).w, (*mvc).h));
+        }
+        else if (auto mvc = cmd.maybe<GLScissorCmd>())
+        {
+            ASSERT_NO_GL_ERROR(glEnable(GL_SCISSOR_TEST));
+            ASSERT_NO_GL_ERROR(glScissor((*mvc).x, (*mvc).y, (*mvc).w, (*mvc).h));
+            bScissorSetByCmd = true;
+            if (lastDrawCall)
+                setFlag(m_lastRenderState, RF_ScissorTest, true);
+        }
+        else if (auto mdc = cmd.maybe<GLDrawCmd>())
+        {
+            const GLPipeline * pipeline = (*mdc).pipeline;
+            const GLProgram * program = pipeline->m_program;
+            const GLMesh * mesh = (*mdc).mesh;
 
-                if (!m_lastDrawCall || (*m_lastDrawCall).pipeline->m_program != program)
-                    ASSERT_NO_GL_ERROR(glUseProgram(program->m_glProgram));
+            if (!lastDrawCall || (*lastDrawCall).pipeline->m_program != program)
+                ASSERT_NO_GL_ERROR(glUseProgram(program->m_glProgram));
 
-                UInt64 diffMask = m_lastDrawCall
-                                      ? differenceMask(m_lastRenderState,
-                                                       pipeline->m_renderState)
-                                      : (UInt64)-1;
-                if (diffMask != 0)
+            UInt64 diffMask = lastDrawCall
+                                  ? differenceMask(m_lastRenderState, pipeline->m_renderState)
+                                  : (UInt64)-1;
+            if (diffMask != 0)
+            {
+                //@TODO: Make sure vieportrect is not float but integer based
+                if (isFlagSet(pipeline->m_renderState, RF_Viewport))
                 {
-                    //@TODO: Make sure vieportrect is not float but integer based
-                    if (isFlagSet(pipeline->m_renderState, RF_Viewport))
-                    {
-                        ASSERT_NO_GL_ERROR(glViewport(pipeline->m_viewportRect.x,
-                                                      pipeline->m_viewportRect.y,
-                                                      pipeline->m_viewportRect.width,
-                                                      pipeline->m_viewportRect.height));
-                    }
-
-                    // Scissor
-                    //@TODO: set actual scissor rect
-                    //@TODO: Add command to RenderPass to reset scissor
-                    if (isFlagDifferent(diffMask, RF_ScissorTest) && !bScissorSetByCmd)
-                    {
-                        if (isFlagSet(pipeline->m_renderState, RF_ScissorTest))
-                        {
-                            ASSERT_NO_GL_ERROR(glEnable(GL_SCISSOR_TEST));
-                        }
-                        else
-                        {
-                            ASSERT_NO_GL_ERROR(glDisable(GL_SCISSOR_TEST));
-                        }
-                    }
-
-                    if (isFlagDifferent(diffMask, RF_Blending))
-                    {
-                        if (isFlagSet(pipeline->m_renderState, RF_Blending))
-                        {
-                            ASSERT_NO_GL_ERROR(glEnable(GL_BLEND));
-                        }
-                        else
-                        {
-                            ASSERT_NO_GL_ERROR(glDisable(GL_BLEND));
-                        }
-                    }
-
-                    if (isFieldDifferent(diffMask, RF_ColorBlendModeMask) ||
-                        isFieldDifferent(diffMask, RF_AlphaBlendModeMask))
-                    {
-                        ASSERT_NO_GL_ERROR(glBlendEquationSeparate(
-                            s_glBlendModes[field<UInt64>(pipeline->m_renderState,
-                                                         RF_ColorBlendModeShift,
-                                                         RF_ColorBlendModeMask)],
-                            s_glBlendModes[field<UInt64>(pipeline->m_renderState,
-                                                         RF_AlphaBlendModeShift,
-                                                         RF_AlphaBlendModeMask)]));
-                    }
-
-                    if (isFieldDifferent(diffMask, RF_ColorSourceBlendFuncMask) ||
-                        isFieldDifferent(diffMask, RF_ColorDestBlendFuncMask) ||
-                        isFieldDifferent(diffMask, RF_AlphaSourceBlendFuncMask) ||
-                        isFieldDifferent(diffMask, RF_AlphaDestBlendFuncMask))
-                    {
-                        ASSERT_NO_GL_ERROR(glBlendFuncSeparate(
-                            s_glBlendFuncs[field<UInt64>(pipeline->m_renderState,
-                                                         RF_ColorSourceBlendFuncShift,
-                                                         RF_ColorSourceBlendFuncMask)],
-                            s_glBlendFuncs[field<UInt64>(pipeline->m_renderState,
-                                                         RF_ColorDestBlendFuncShift,
-                                                         RF_ColorDestBlendFuncMask)],
-                            s_glBlendFuncs[field<UInt64>(pipeline->m_renderState,
-                                                         RF_AlphaSourceBlendFuncShift,
-                                                         RF_AlphaSourceBlendFuncMask)],
-                            s_glBlendFuncs[field<UInt64>(pipeline->m_renderState,
-                                                         RF_AlphaDestBlendFuncShift,
-                                                         RF_AlphaDestBlendFuncMask)]));
-                    }
-
-                    if (isFlagDifferent(diffMask, RF_DepthTest))
-                    {
-                        if (isFlagSet(pipeline->m_renderState, RF_DepthTest))
-                        {
-                            ASSERT_NO_GL_ERROR(glEnable(GL_DEPTH_TEST));
-                        }
-                        else
-                        {
-                            ASSERT_NO_GL_ERROR(glDisable(GL_DEPTH_TEST));
-                        }
-                    }
-
-                    if (isFlagDifferent(diffMask, RF_Multisampling))
-                    {
-                        if (isFlagSet(pipeline->m_renderState, RF_Multisampling))
-                        {
-                            ASSERT_NO_GL_ERROR(glEnable(GL_MULTISAMPLE));
-                        }
-                        else
-                        {
-                            ASSERT_NO_GL_ERROR(glDisable(GL_MULTISAMPLE));
-                        }
-                    }
-
-                    if (isFlagDifferent(diffMask, RF_DepthWrite))
-                    {
-                        ASSERT_NO_GL_ERROR(
-                            glDepthMask(isFlagSet(pipeline->m_renderState, RF_DepthWrite)));
-                    }
-
-                    if (isFieldDifferent(diffMask, RF_DepthFuncMask))
-                    {
-                        ASSERT_NO_GL_ERROR(glDepthFunc(s_glCompareFuncs[field<UInt64>(
-                            pipeline->m_renderState, RF_DepthFuncShift, RF_DepthFuncMask)]));
-                    }
-
-                    if (isFlagDifferent(diffMask, RF_ColorWriteRed) ||
-                        isFlagDifferent(diffMask, RF_ColorWriteGreen) ||
-                        isFlagDifferent(diffMask, RF_ColorWriteBlue) ||
-                        isFlagDifferent(diffMask, RF_ColorWriteAlpha))
-                    {
-                        ASSERT_NO_GL_ERROR(
-                            glColorMask(isFlagSet(pipeline->m_renderState, RF_ColorWriteRed),
-                                        isFlagSet(pipeline->m_renderState, RF_ColorWriteGreen),
-                                        isFlagSet(pipeline->m_renderState, RF_ColorWriteBlue),
-                                        isFlagSet(pipeline->m_renderState, RF_ColorWriteAlpha)));
-                    }
-
-                    if (isFlagDifferent(diffMask, RF_FrontFaceClockwise))
-                    {
-                        ASSERT_NO_GL_ERROR(glFrontFace(
-                            isFlagSet(pipeline->m_renderState, RF_FrontFaceClockwise) ? GL_CW
-                                                                                      : GL_CCW));
-                    }
-
-                    if (isFieldDifferent(diffMask, RF_CullFaceMask))
-                    {
-                        UInt64 cff = field<UInt64>(
-                            pipeline->m_renderState, RF_CullFaceShift, RF_CullFaceMask);
-                        if (cff != (UInt64)FaceType::None)
-                        {
-                            ASSERT_NO_GL_ERROR(glEnable(GL_CULL_FACE));
-                            ASSERT_NO_GL_ERROR(glCullFace(s_glFaceType[cff]));
-                        }
-                        else
-                        {
-                            ASSERT_NO_GL_ERROR(glDisable(GL_CULL_FACE));
-                        }
-                    }
+                    ASSERT_NO_GL_ERROR(glViewport(pipeline->m_viewportRect.x,
+                                                  pipeline->m_viewportRect.y,
+                                                  pipeline->m_viewportRect.width,
+                                                  pipeline->m_viewportRect.height));
                 }
 
-                // point towards the correct locations in the uniform buffer
-                for (UInt32 j = 0; j < (*mdc).uboBindings.count(); ++j)
+                // Scissor
+                //@TODO: set actual scissor rect
+                //@TODO: Add command to RenderPass to reset scissor
+                if (isFlagDifferent(diffMask, RF_ScissorTest) && !bScissorSetByCmd)
                 {
-                    if (!m_lastDrawCall || j >= (*m_lastDrawCall).uboBindings.count() ||
-                        (*mdc).uboBindings[j].byteOffset !=
-                            (*m_lastDrawCall).uboBindings[j].byteOffset)
+                    if (isFlagSet(pipeline->m_renderState, RF_ScissorTest))
                     {
-                        ASSERT_NO_GL_ERROR(glBindBufferRange(GL_UNIFORM_BUFFER,
-                                                             (*mdc).uboBindings[j].bindingPoint,
-                                                             m_ubo,
-                                                             (*mdc).uboBindings[j].byteOffset,
-                                                             (*mdc).uboBindings[j].byteCount));
-                    }
-                }
-
-                // bind all necessary textures
-                for (Size i = 0; i < pipeline->m_textures.count(); ++i)
-                {
-                    GLPipelineTexture * tex = pipeline->m_textures[i].get();
-                    if (tex->m_texture)
-                    {
-                        // if this is a render target, make sure its blit in case its attached to a
-                        // MSAA fbo
-                        if (tex->m_texture->m_renderBuffer)
-                            tex->m_texture->m_renderBuffer->finalizeForReading(
-                                pass->m_renderBuffer);
-
-                        STICK_ASSERT(tex->m_sampler);
-                        ASSERT_NO_GL_ERROR(glBindSampler((GLuint)i, tex->m_sampler->m_glSampler));
-                        if (!m_lastDrawCall ||
-                            (*m_lastDrawCall).pipeline->m_textures[i].get() != tex)
-                        {
-                            printf("binding texture\n");
-                            ASSERT_NO_GL_ERROR(glActiveTexture(GL_TEXTURE0 + (GLuint)i));
-                            ASSERT_NO_GL_ERROR(glBindTexture(tex->m_texture->m_glTarget,
-                                                             tex->m_texture->m_glTexture));
-                        }
-                    }
-                }
-
-                // draw the mesh
-                ASSERT_NO_GL_ERROR(glBindVertexArray(mesh->m_glVao));
-                GLenum glVertexMode = s_glVertexDrawModes[static_cast<Size>((*mdc).drawMode)];
-
-                if (mesh->m_indexBuffer)
-                {
-                    printf("VCOUNT %lu %lu\n", (*mdc).vertexCount, (*mdc).vertexOffset);
-
-                    if ((*mdc).baseVertex)
-                    {
-                        ASSERT_NO_GL_ERROR(glDrawElementsBaseVertex(
-                            glVertexMode,
-                            (*mdc).vertexCount,
-                            GL_UNSIGNED_INT,
-                            BUFFER_OFFSET(sizeof(GLuint) * (*mdc).vertexOffset),
-                            (*mdc).baseVertex));
+                        ASSERT_NO_GL_ERROR(glEnable(GL_SCISSOR_TEST));
                     }
                     else
                     {
-                        ASSERT_NO_GL_ERROR(
-                            glDrawElements(glVertexMode,
-                                           (*mdc).vertexCount,
-                                           GL_UNSIGNED_INT,
-                                           BUFFER_OFFSET(sizeof(GLuint) * (*mdc).vertexOffset)));
+                        ASSERT_NO_GL_ERROR(glDisable(GL_SCISSOR_TEST));
                     }
+                }
+
+                if (isFlagDifferent(diffMask, RF_Blending))
+                {
+                    if (isFlagSet(pipeline->m_renderState, RF_Blending))
+                    {
+                        ASSERT_NO_GL_ERROR(glEnable(GL_BLEND));
+                    }
+                    else
+                    {
+                        ASSERT_NO_GL_ERROR(glDisable(GL_BLEND));
+                    }
+                }
+
+                if (isFieldDifferent(diffMask, RF_ColorBlendModeMask) ||
+                    isFieldDifferent(diffMask, RF_AlphaBlendModeMask))
+                {
+                    ASSERT_NO_GL_ERROR(glBlendEquationSeparate(
+                        s_glBlendModes[field<UInt64>(pipeline->m_renderState,
+                                                     RF_ColorBlendModeShift,
+                                                     RF_ColorBlendModeMask)],
+                        s_glBlendModes[field<UInt64>(pipeline->m_renderState,
+                                                     RF_AlphaBlendModeShift,
+                                                     RF_AlphaBlendModeMask)]));
+                }
+
+                if (isFieldDifferent(diffMask, RF_ColorSourceBlendFuncMask) ||
+                    isFieldDifferent(diffMask, RF_ColorDestBlendFuncMask) ||
+                    isFieldDifferent(diffMask, RF_AlphaSourceBlendFuncMask) ||
+                    isFieldDifferent(diffMask, RF_AlphaDestBlendFuncMask))
+                {
+                    ASSERT_NO_GL_ERROR(glBlendFuncSeparate(
+                        s_glBlendFuncs[field<UInt64>(pipeline->m_renderState,
+                                                     RF_ColorSourceBlendFuncShift,
+                                                     RF_ColorSourceBlendFuncMask)],
+                        s_glBlendFuncs[field<UInt64>(pipeline->m_renderState,
+                                                     RF_ColorDestBlendFuncShift,
+                                                     RF_ColorDestBlendFuncMask)],
+                        s_glBlendFuncs[field<UInt64>(pipeline->m_renderState,
+                                                     RF_AlphaSourceBlendFuncShift,
+                                                     RF_AlphaSourceBlendFuncMask)],
+                        s_glBlendFuncs[field<UInt64>(pipeline->m_renderState,
+                                                     RF_AlphaDestBlendFuncShift,
+                                                     RF_AlphaDestBlendFuncMask)]));
+                }
+
+                if (isFlagDifferent(diffMask, RF_DepthTest))
+                {
+                    if (isFlagSet(pipeline->m_renderState, RF_DepthTest))
+                    {
+                        ASSERT_NO_GL_ERROR(glEnable(GL_DEPTH_TEST));
+                    }
+                    else
+                    {
+                        ASSERT_NO_GL_ERROR(glDisable(GL_DEPTH_TEST));
+                    }
+                }
+
+                if (isFlagDifferent(diffMask, RF_Multisampling))
+                {
+                    if (isFlagSet(pipeline->m_renderState, RF_Multisampling))
+                    {
+                        ASSERT_NO_GL_ERROR(glEnable(GL_MULTISAMPLE));
+                    }
+                    else
+                    {
+                        ASSERT_NO_GL_ERROR(glDisable(GL_MULTISAMPLE));
+                    }
+                }
+
+                if (isFlagDifferent(diffMask, RF_DepthWrite))
+                {
+                    ASSERT_NO_GL_ERROR(
+                        glDepthMask(isFlagSet(pipeline->m_renderState, RF_DepthWrite)));
+                }
+
+                if (isFieldDifferent(diffMask, RF_DepthFuncMask))
+                {
+                    ASSERT_NO_GL_ERROR(glDepthFunc(s_glCompareFuncs[field<UInt64>(
+                        pipeline->m_renderState, RF_DepthFuncShift, RF_DepthFuncMask)]));
+                }
+
+                if (isFlagDifferent(diffMask, RF_ColorWriteRed) ||
+                    isFlagDifferent(diffMask, RF_ColorWriteGreen) ||
+                    isFlagDifferent(diffMask, RF_ColorWriteBlue) ||
+                    isFlagDifferent(diffMask, RF_ColorWriteAlpha))
+                {
+                    ASSERT_NO_GL_ERROR(
+                        glColorMask(isFlagSet(pipeline->m_renderState, RF_ColorWriteRed),
+                                    isFlagSet(pipeline->m_renderState, RF_ColorWriteGreen),
+                                    isFlagSet(pipeline->m_renderState, RF_ColorWriteBlue),
+                                    isFlagSet(pipeline->m_renderState, RF_ColorWriteAlpha)));
+                }
+
+                if (isFlagDifferent(diffMask, RF_FrontFaceClockwise))
+                {
+                    ASSERT_NO_GL_ERROR(glFrontFace(
+                        isFlagSet(pipeline->m_renderState, RF_FrontFaceClockwise) ? GL_CW
+                                                                                  : GL_CCW));
+                }
+
+                if (isFieldDifferent(diffMask, RF_CullFaceMask))
+                {
+                    UInt64 cff =
+                        field<UInt64>(pipeline->m_renderState, RF_CullFaceShift, RF_CullFaceMask);
+                    if (cff != (UInt64)FaceType::None)
+                    {
+                        ASSERT_NO_GL_ERROR(glEnable(GL_CULL_FACE));
+                        ASSERT_NO_GL_ERROR(glCullFace(s_glFaceType[cff]));
+                    }
+                    else
+                    {
+                        ASSERT_NO_GL_ERROR(glDisable(GL_CULL_FACE));
+                    }
+                }
+            }
+
+            // point towards the correct locations in the uniform buffer
+            for (UInt32 j = 0; j < (*mdc).uboBindings.count(); ++j)
+            {
+                if (!lastDrawCall || j >= (*lastDrawCall).uboBindings.count() ||
+                    (*mdc).uboBindings[j].byteOffset != (*lastDrawCall).uboBindings[j].byteOffset)
+                {
+                    ASSERT_NO_GL_ERROR(glBindBufferRange(GL_UNIFORM_BUFFER,
+                                                         (*mdc).uboBindings[j].bindingPoint,
+                                                         pass->m_ubo,
+                                                         (*mdc).uboBindings[j].byteOffset,
+                                                         (*mdc).uboBindings[j].byteCount));
+                }
+            }
+
+            // bind all necessary textures
+            for (Size i = 0; i < pipeline->m_textures.count(); ++i)
+            {
+                GLPipelineTexture * tex = pipeline->m_textures[i].get();
+                if (tex->m_texture)
+                {
+                    // if this is a render target, make sure its blit in case its attached to a
+                    // MSAA fbo
+                    if (tex->m_texture->m_renderBuffer)
+                        tex->m_texture->m_renderBuffer->finalizeForReading(pass->m_renderBuffer);
+
+                    STICK_ASSERT(tex->m_sampler);
+                    ASSERT_NO_GL_ERROR(glBindSampler((GLuint)i, tex->m_sampler->m_glSampler));
+                    if (!lastDrawCall || (*lastDrawCall).pipeline->m_textures[i].get() != tex)
+                    {
+                        ASSERT_NO_GL_ERROR(glActiveTexture(GL_TEXTURE0 + (GLuint)i));
+                        ASSERT_NO_GL_ERROR(
+                            glBindTexture(tex->m_texture->m_glTarget, tex->m_texture->m_glTexture));
+                    }
+                }
+            }
+
+            // draw the mesh
+            ASSERT_NO_GL_ERROR(glBindVertexArray(mesh->m_glVao));
+            GLenum glVertexMode = s_glVertexDrawModes[static_cast<Size>((*mdc).drawMode)];
+
+            if (mesh->m_indexBuffer)
+            {
+                if ((*mdc).baseVertex)
+                {
+                    ASSERT_NO_GL_ERROR(glDrawElementsBaseVertex(
+                        glVertexMode,
+                        (*mdc).vertexCount,
+                        GL_UNSIGNED_INT,
+                        BUFFER_OFFSET(sizeof(GLuint) * (*mdc).vertexOffset),
+                        (*mdc).baseVertex));
                 }
                 else
                 {
                     ASSERT_NO_GL_ERROR(
-                        glDrawArrays(glVertexMode, (*mdc).vertexOffset, (*mdc).vertexCount));
+                        glDrawElements(glVertexMode,
+                                       (*mdc).vertexCount,
+                                       GL_UNSIGNED_INT,
+                                       BUFFER_OFFSET(sizeof(GLuint) * (*mdc).vertexOffset)));
                 }
-
-                m_lastDrawCall = *mdc;
-                m_lastRenderState = (*m_lastDrawCall).pipeline->m_renderState;
             }
-            else if (auto mdc = cmd.maybe<GLExternalDrawCmd>())
+            else
             {
-                err = (*mdc).fn();
-
-                //@TODO: Should we clear the render passes etc. before returning any errors so that
-                // there is the possibility of recovery??
-                if (err)
-                    return err;
-
-                // we reset the last draw call to make sure the render state is fully being enabled
-                // for the following draw call as there is no way for us to know hat the external
-                // draw command changed regarding the opengl state.
-                m_lastDrawCall.reset();
+                ASSERT_NO_GL_ERROR(
+                    glDrawArrays(glVertexMode, (*mdc).vertexOffset, (*mdc).vertexCount));
             }
+
+            lastDrawCall = *mdc;
+            m_lastRenderState = (*lastDrawCall).pipeline->m_renderState;
         }
+        else if (auto mdc = cmd.maybe<GLExternalDrawCmd>())
+        {
+            err = (*mdc).fn();
 
-        if(bScissorSetByCmd)
-            ASSERT_NO_GL_ERROR(glDisable(GL_SCISSOR_TEST));
+            //@TODO: Should we clear the render passes etc. before returning any errors so that
+            // there is the possibility of recovery??
+            if (err)
+                return err;
 
-        pass->reset();
-        m_renderPassFreeList.append(pass);
+            // we reset the last draw call to make sure the render state is fully being enabled
+            // for the following draw call as there is no way for us to know hat the external
+            // draw command changed regarding the opengl state.
+            lastDrawCall.reset();
+        }
     }
-    m_currentRenderPasses.clear();
-    m_bInFrame = false;
 
-    return err;
+    if (bScissorSetByCmd)
+        ASSERT_NO_GL_ERROR(glDisable(GL_SCISSOR_TEST));
+
+    pass->reset();
+    m_renderPassFreeList.append(pass);
+
+    return Error();
 }
 
 void GLRenderDevice::readPixels(
@@ -932,17 +895,6 @@ void GLRenderDevice::readPixels(
     GLTextureFormat fmt = s_glTextureFormats[(Size)_format];
     //@TODO: should propably set glReadBuffers here
     ASSERT_NO_GL_ERROR(glReadPixels(_x, _y, _w, _h, fmt.glFormat, fmt.glDataType, _outData));
-}
-
-UInt32 GLRenderDevice::copyToUBO(Size _byteCount, const void * _data)
-{
-    UInt32 ret = m_mappedUBOOffset;
-    STICK_ASSERT(m_mappedUBOOffset + _byteCount < UNIFORM_BUFFER_SIZE);
-    std::memcpy(m_mappedUBO + m_mappedUBOOffset, _data, _byteCount);
-    // advance the offset 16 byte aligned
-    m_mappedUBOOffset += _byteCount;
-    m_mappedUBOOffset += stick::alignOffset(m_mappedUBO + m_mappedUBOOffset, m_uboOffsetAlignment);
-    return ret;
 }
 
 GLProgram::GLProgram()
@@ -1400,8 +1352,37 @@ GLMesh::~GLMesh()
 
 GLRenderPass::GLRenderPass(GLRenderDevice * _device, Allocator & _alloc) :
     m_device(_device),
-    m_commands(_alloc)
+    m_commands(_alloc),
+    m_mappedUBO(nullptr),
+    m_mappedUBOOffset(0)
 {
+    ASSERT_NO_GL_ERROR(glGenBuffers(1, &m_ubo));
+}
+
+GLRenderPass::~GLRenderPass()
+{
+    glDeleteBuffers(1, &m_ubo);
+}
+
+void GLRenderPass::prepareDrawing()
+{
+    ASSERT_NO_GL_ERROR(glBindBuffer(GL_UNIFORM_BUFFER, m_ubo));
+    ASSERT_NO_GL_ERROR(glBufferData(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
+    m_mappedUBO = (UInt8 *)glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
+    m_mappedUBOOffset = 0;
+    STICK_ASSERT(m_mappedUBO);
+}
+
+UInt32 GLRenderPass::copyToUBO(Size _byteCount, const void * _data)
+{
+    UInt32 ret = m_mappedUBOOffset;
+    STICK_ASSERT(m_mappedUBOOffset + _byteCount < UNIFORM_BUFFER_SIZE);
+    std::memcpy(m_mappedUBO + m_mappedUBOOffset, _data, _byteCount);
+    // advance the offset with the correct alignment
+    m_mappedUBOOffset += _byteCount;
+    m_mappedUBOOffset +=
+        stick::alignOffset(m_mappedUBO + m_mappedUBOOffset, m_device->m_uboOffsetAlignment);
+    return ret;
 }
 
 void GLRenderPass::drawMesh(const Mesh * _mesh,
@@ -1430,7 +1411,7 @@ void GLRenderPass::drawMesh(const Mesh * _mesh,
         GLUniformBlockStorage & storage =
             const_cast<GLUniformBlockStorage &>(pipe->m_uniformBlockStorage[i]);
         auto & block = pipe->m_program->m_uniformBlocks[i];
-        storage.lastByteOffset = m_device->copyToUBO(storage.data.count(), storage.data.ptr());
+        storage.lastByteOffset = copyToUBO(storage.data.count(), storage.data.ptr());
         bindings.append(
             { block.bindingPoint, storage.lastByteOffset, (UInt32)storage.data.count() });
     }
@@ -1466,7 +1447,12 @@ void GLRenderPass::clearBuffers(const ClearSettings & _settings)
 
 void GLRenderPass::reset()
 {
+    //@TODO: ensure that the ubo is not mapped anymore? I think that can't really happen right now
+    // as reset is only used internally and called if a pass is actually being drawn, which will
+    // unmap it
     m_renderBuffer = nullptr;
+    m_mappedUBOOffset = 0;
+    m_mappedUBO = nullptr;
     m_commands.clear();
 }
 
