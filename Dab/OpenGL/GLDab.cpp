@@ -639,7 +639,7 @@ stick::Error GLRenderDevice::endPass(RenderPass * _pass)
             ASSERT_NO_GL_ERROR(glEnable(GL_SCISSOR_TEST));
             ASSERT_NO_GL_ERROR(glScissor((*mvc).x, (*mvc).y, (*mvc).w, (*mvc).h));
             bScissorSetByCmd = true;
-            if (lastDrawCall)
+            if (m_lastDrawCall)
                 setFlag(m_lastRenderState, RF_ScissorTest, true);
         }
         else if (auto mdc = cmd.maybe<GLDrawCmd>())
@@ -648,10 +648,10 @@ stick::Error GLRenderDevice::endPass(RenderPass * _pass)
             const GLProgram * program = pipeline->m_program;
             const GLMesh * mesh = (*mdc).mesh;
 
-            if (!lastDrawCall || (*lastDrawCall).pipeline->m_program != program)
+            if (!m_lastDrawCall || (*m_lastDrawCall).pipeline->m_program != program)
                 ASSERT_NO_GL_ERROR(glUseProgram(program->m_glProgram));
 
-            UInt64 diffMask = lastDrawCall
+            UInt64 diffMask = m_lastDrawCall
                                   ? differenceMask(m_lastRenderState, pipeline->m_renderState)
                                   : (UInt64)-1;
             if (diffMask != 0)
@@ -798,8 +798,8 @@ stick::Error GLRenderDevice::endPass(RenderPass * _pass)
             // point towards the correct locations in the uniform buffer
             for (UInt32 j = 0; j < (*mdc).uboBindings.count(); ++j)
             {
-                if (!lastDrawCall || j >= (*lastDrawCall).uboBindings.count() ||
-                    (*mdc).uboBindings[j].byteOffset != (*lastDrawCall).uboBindings[j].byteOffset)
+                if (!m_lastDrawCall || j >= (*m_lastDrawCall).uboBindings.count() ||
+                    (*mdc).uboBindings[j].byteOffset != (*m_lastDrawCall).uboBindings[j].byteOffset)
                 {
                     ASSERT_NO_GL_ERROR(glBindBufferRange(GL_UNIFORM_BUFFER,
                                                          (*mdc).uboBindings[j].bindingPoint,
@@ -822,7 +822,7 @@ stick::Error GLRenderDevice::endPass(RenderPass * _pass)
 
                     STICK_ASSERT(tex->m_sampler);
                     ASSERT_NO_GL_ERROR(glBindSampler((GLuint)i, tex->m_sampler->m_glSampler));
-                    if (!lastDrawCall || (*lastDrawCall).pipeline->m_textures[i].get() != tex)
+                    if (!m_lastDrawCall || (*m_lastDrawCall).pipeline->m_textures[i].get() != tex)
                     {
                         ASSERT_NO_GL_ERROR(glActiveTexture(GL_TEXTURE0 + (GLuint)i));
                         ASSERT_NO_GL_ERROR(
@@ -861,8 +861,8 @@ stick::Error GLRenderDevice::endPass(RenderPass * _pass)
                     glDrawArrays(glVertexMode, (*mdc).vertexOffset, (*mdc).vertexCount));
             }
 
-            lastDrawCall = *mdc;
-            m_lastRenderState = (*lastDrawCall).pipeline->m_renderState;
+            m_lastDrawCall = *mdc;
+            m_lastRenderState = (*m_lastDrawCall).pipeline->m_renderState;
         }
         else if (auto mdc = cmd.maybe<GLExternalDrawCmd>())
         {
@@ -876,7 +876,7 @@ stick::Error GLRenderDevice::endPass(RenderPass * _pass)
             // we reset the last draw call to make sure the render state is fully being enabled
             // for the following draw call as there is no way for us to know hat the external
             // draw command changed regarding the opengl state.
-            lastDrawCall.reset();
+            m_lastDrawCall.reset();
         }
     }
 
