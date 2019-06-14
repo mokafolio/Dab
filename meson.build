@@ -12,7 +12,7 @@ if host_machine.system() == 'darwin'
     add_project_arguments('-DGL_SILENCE_DEPRECATION', language: ['cpp', 'c'])
 endif
 
-if meson.is_subproject() == false
+if meson.is_subproject() == false or get_option('forceInstallHeaders')
     install_headers('Dab/Dab.hpp', subdir: 'Dab')
     install_headers('Dab/OpenGL/GLDab.hpp', subdir: 'Dab/OpenGL')
     install_headers('Dab/Libs/GL/gl3w.h', subdir: 'Dab/Libs/GL')
