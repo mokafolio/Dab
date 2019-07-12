@@ -47,6 +47,10 @@ endif
 
 dabDeps += dependency('GL')
 
+if host_machine.system() == 'linux'
+    dabDeps += cc.find_library('dl', required : true)
+endif
+
 dab = library('Dab', dabSrc, dependencies: dabDeps, include_directories : incDirs, install: meson.is_subproject() == false)
 
 dabDep = declare_dependency(link_with : dab, 
